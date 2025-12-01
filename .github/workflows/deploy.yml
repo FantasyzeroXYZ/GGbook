@@ -3,39 +3,42 @@ name: Deploy static site to GitHub Pages
 on:
   push:
     branches:
-      - test
-  workflow_dispatch:
+      - test        # 当 test 分支推送时自动部署
+  workflow_dispatch: # 允许手动触发
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write
+      contents: write   # 允许写入分支
       pages: write
       id-token: write
 
     steps:
+      # 1. 检出仓库
       - name: Checkout test branch
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # 2. 安装 Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 18
 
-      - name: Install dependencies
-        run: npm ci
+      # 3. 安装依赖并构建项目
+      - name: Install dependencies and build
+        run: |
+          npm install         # 使用 npm install 避免缺少 package-lock.json 报错
+          npm run build        # 构建 Vite 项目，输出到 dist
 
-      - name: Build the project
-        run: npm run build
-
+      # 4. 部署到 test 分支
       - name: Deploy to test branch
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_branch: test
-          publish_dir: dist
-          force_orphan: true
+          publish_branch: test      # 部署目标分支
+          publish_dir: dist         # Vite 默认打包目录
+          force_orphan: true        # 清空旧内容重新部署
