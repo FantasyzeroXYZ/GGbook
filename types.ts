@@ -1,4 +1,3 @@
-
 export interface Book {
     title: string;
     author: string;
@@ -75,6 +74,7 @@ export interface ReaderState {
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
+    selectedElementId: string | null; // 当前选中内容的 DOM ID (用于音频跳转)
     dictionaryModalVisible: boolean;
     dictionaryData: any | null;
     dictionaryLoading: boolean;

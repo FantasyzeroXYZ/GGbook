@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
 import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress } from './types';
@@ -10,13 +9,10 @@ const Icon = ({ name, className }: { name: string; className?: string }) => <i c
 type ViewMode = 'library' | 'reader';
 
 export default function App() {
-  // 视图状态：书架或阅读器
   const [view, setView] = useState<ViewMode>('library');
   const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
-  // 当前打开书籍的 ID，用于保存进度
   const [currentBookId, setCurrentBookId] = useState<string | null>(null);
 
-  // 阅读器状态
   const [state, setState] = useState<ReaderState>({
     currentBook: null,
     navigationMap: [],
@@ -37,6 +33,7 @@ export default function App() {
     selectionToolbarVisible: false,
     selectionRect: null,
     selectedText: '',
+    selectedElementId: null,
     dictionaryModalVisible: false,
     dictionaryData: null,
     dictionaryLoading: false,
@@ -53,36 +50,29 @@ export default function App() {
   const controller = useRef<EpubController | null>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
 
-  // 翻译助手
   const t = (key: keyof typeof translations['en']) => {
       const lang = tempSettings.language || 'zh';
       return translations[lang][key];
   };
 
-  // 初始化：加载设置和书架数据
   useEffect(() => {
-    // 实例化控制器（仅一次）
     const c = new EpubController(state, (partial) => {
         setState(prev => ({ ...prev, ...partial }));
     });
     controller.current = c;
     
-    // 同步设置
     setTempSettings(c.settings);
     setTempAnki(c.ankiSettings);
     
-    // 初始化时正确应用深色模式
     if (c.settings.darkMode) {
         document.body.classList.add('dark');
         setState(s => ({ ...s, isDarkMode: true }));
     }
 
-    // 加载书架数据
     refreshLibrary();
 
-    // 键盘快捷键监听
     const handleKey = (e: KeyboardEvent) => {
-        if (view !== 'reader') return; // 仅在阅读界面响应
+        if (view !== 'reader') return;
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         if (e.key === 'ArrowLeft') c.prevPage();
         if (e.key === 'ArrowRight') c.nextPage();
@@ -95,9 +85,8 @@ export default function App() {
         c.stopAudio();
         window.removeEventListener('keydown', handleKey);
     };
-  }, []); // 依赖项为空，只运行一次
+  }, []);
 
-  // 自动保存进度 (防抖)
   useEffect(() => {
       if (view !== 'reader' || !currentBookId) return;
       
@@ -111,19 +100,17 @@ export default function App() {
               };
               db.updateBookProgress(currentBookId, progress).catch(err => console.error("Save progress failed", err));
           }
-      }, 2000); // 2秒无变化后保存
+      }, 2000);
 
       return () => clearTimeout(saveTimer);
   }, [state.currentCfi, state.audioCurrentTime, currentBookId, view, state.currentAudioFile]);
 
-  // 当进入阅读器视图时，挂载渲染容器
   useEffect(() => {
       if (view === 'reader' && viewerRef.current && controller.current) {
           controller.current.mount(viewerRef.current);
       }
   }, [view]);
 
-  // 加载书架
   const refreshLibrary = async () => {
       try {
           const books = await db.getAllBooks();
@@ -133,7 +120,6 @@ export default function App() {
       }
   };
 
-  // 设置更新
   const updateSetting = (key: keyof AppSettings, val: any) => {
       setTempSettings(prev => ({ ...prev, [key]: val }));
       if (controller.current) {
@@ -141,12 +127,8 @@ export default function App() {
           controller.current.saveSettings();
           
           if (key === 'darkMode') {
-             // document.body 的 class 切换逻辑
-             if (val) {
-                 document.body.classList.add('dark');
-             } else {
-                 document.body.classList.remove('dark');
-             }
+             if (val) document.body.classList.add('dark');
+             else document.body.classList.remove('dark');
              setState(s => ({ ...s, isDarkMode: val }));
              controller.current.toggleDarkMode(val);
           } else if (key === 'theme') {
@@ -159,19 +141,16 @@ export default function App() {
       }
   };
 
-  // 导入新书
   const handleImportBook = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
           const file = e.target.files[0];
           setState(s => ({ ...s, isLoading: true, loadingMessage: t('opening') }));
           
           try {
-              // 解析元数据但不渲染
               const book = ePub(file);
               await book.ready;
               const meta = await book.loaded.metadata;
               
-              // 获取封面并转换为 Base64
               let coverUrl = '';
               try {
                   const coverBlobUrl = await book.coverUrl();
@@ -189,7 +168,7 @@ export default function App() {
               }
 
               const newBook: LibraryBook = {
-                  id: new Date().getTime().toString(), // 简单 ID
+                  id: new Date().getTime().toString(),
                   title: meta.title || file.name,
                   author: meta.creator || 'Unknown',
                   coverUrl: coverUrl,
@@ -209,7 +188,6 @@ export default function App() {
       }
   };
 
-  // 打开书籍
   const openBook = async (book: LibraryBook) => {
       setState(s => ({ ...s, isLoading: true, loadingMessage: t('opening') }));
       try {
@@ -217,7 +195,6 @@ export default function App() {
           if (fileBlob) {
               setCurrentBookId(book.id);
               setView('reader');
-              // 稍微延迟让 DOM 渲染出 reader div
               setTimeout(() => {
                   controller.current?.loadFile(fileBlob, book.progress);
               }, 100);
@@ -231,7 +208,6 @@ export default function App() {
       }
   };
 
-  // 删除书籍
   const deleteBook = async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
       if (confirm('确定要删除这本书吗？')) {
@@ -240,17 +216,14 @@ export default function App() {
       }
   };
 
-  // 退出阅读
   const exitReader = () => {
       controller.current?.destroy();
       setView('library');
       setState(s => ({ ...s, currentBook: null }));
       setCurrentBookId(null);
-      // 刷新书架以更新进度显示（可选）
       refreshLibrary();
   };
 
-  // 点击外部关闭工具栏
   useEffect(() => {
       const listener = (e: MouseEvent) => {
           const target = e.target as HTMLElement;
@@ -298,11 +271,11 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="flex-1 container mx-auto p-4 md:p-6">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-xl md:text-2xl font-bold">我的书架</h2>
+            <div className="flex-1 container mx-auto p-2 md:p-6">
+                <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-lg md:text-2xl font-bold">我的书架</h2>
                     <label className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded cursor-pointer transition-colors flex items-center gap-2">
-                        <Icon name="plus" /> 导入书籍
+                        <Icon name="plus" /> 导入
                         <input type="file" className="hidden" accept=".epub" onChange={handleImportBook} />
                     </label>
                 </div>
@@ -314,39 +287,28 @@ export default function App() {
                     </div>
                 )}
 
-                {!state.isLoading && libraryBooks.length === 0 && (
-                    <div className="text-center py-20 text-gray-500 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
-                        <div className="text-6xl mb-4 opacity-20"><Icon name="book" /></div>
-                        <p className="text-xl">书架是空的</p>
-                        <p className="text-sm mt-2">点击右上角导入你的第一本书</p>
-                    </div>
-                )}
-
                 <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 md:gap-6">
                     {libraryBooks.map(book => (
-                        <div key={book.id} onClick={() => openBook(book)} className="bg-white dark:bg-gray-800 rounded-md shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative">
-                            <div className="h-24 sm:h-32 md:h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400 overflow-hidden">
+                        <div key={book.id} onClick={() => openBook(book)} className="bg-white dark:bg-gray-800 rounded-md shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative h-full">
+                            <div className="w-full aspect-[3/4] bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400 overflow-hidden">
                                 {book.coverUrl ? (
                                     <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
                                 ) : (
                                     <Icon name="book" className="text-2xl md:text-4xl" />
                                 )}
                             </div>
-                            <div className="p-2 flex-1 flex flex-col justify-between">
-                                <div>
-                                    <h3 className="font-bold text-xs md:text-base mb-0.5 line-clamp-2" title={book.title}>{book.title}</h3>
-                                    <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400 truncate">{book.author}</p>
-                                </div>
-                                {book.progress && (
-                                    <div className="mt-1 flex items-center gap-1 text-[10px] text-gray-400">
-                                        <Icon name="history" className="text-[8px]" />
-                                        <span>已读</span>
-                                    </div>
-                                )}
+                            <div className="p-2 flex-1 flex flex-col justify-start">
+                                <h3 className="font-bold text-[11px] md:text-base leading-tight mb-1 line-clamp-2" title={book.title}>{book.title}</h3>
+                                <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400 truncate hidden sm:block">{book.author}</p>
                             </div>
+                            {book.progress && (
+                                <div className="absolute bottom-1 right-1 bg-black/50 text-white text-[10px] px-1 rounded">
+                                    {Math.floor((book.progress.audioTime || 0) / 60)}m
+                                </div>
+                            )}
                             <button 
                                 onClick={(e) => deleteBook(book.id, e)}
-                                className="absolute top-1 right-1 p-1 md:p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
+                                className="absolute top-1 right-1 p-1.5 md:p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600 z-10"
                                 title="删除"
                             >
                                 <Icon name="trash" className="text-xs md:text-sm"/>
@@ -589,14 +551,42 @@ export default function App() {
       {state.selectionToolbarVisible && state.selectionRect && (
           <div 
             id="selection-toolbar"
-            className="fixed bg-gray-800 text-white rounded-lg shadow-lg p-1 flex gap-1 z-50 animate-bounce-in"
+            className="fixed bg-gray-800 text-white rounded-lg shadow-lg p-2 flex gap-2 z-50 animate-bounce-in"
             style={{ 
-                top: Math.max(10, state.selectionRect.top - 50) + 'px', 
-                left: Math.min(window.innerWidth - 150, Math.max(10, state.selectionRect.left + state.selectionRect.width/2 - 75)) + 'px' 
+                top: Math.max(10, state.selectionRect.top - 60) + 'px', // 向上偏移以显示在选区上方
+                left: Math.min(window.innerWidth - 180, Math.max(10, state.selectionRect.left + state.selectionRect.width/2 - 90)) + 'px' 
             }}
           >
-              <button className="p-2 hover:bg-gray-700 rounded" onClick={() => controller.current?.lookupWord(state.selectedText)}><Icon name="book"/></button>
-              <button className="p-2 hover:bg-gray-700 rounded" onClick={() => { navigator.clipboard.writeText(state.selectedText); setState(s => ({...s, selectionToolbarVisible: false})) }}><Icon name="copy"/></button>
+              <button className="p-2 hover:bg-gray-700 rounded transition-colors" title={t('dictionary')} onClick={() => controller.current?.lookupWord(state.selectedText)}>
+                  <Icon name="book" />
+              </button>
+              <button className="p-2 hover:bg-gray-700 rounded transition-colors" title="Highlight" onClick={() => controller.current?.highlightSelection()}>
+                  <Icon name="highlighter" />
+              </button>
+              <button 
+                className="p-2 hover:bg-gray-700 rounded transition-colors" 
+                title={t('addToAnki')} 
+                onClick={async () => {
+                    // 快速添加：使用选中文本作为单词和句子
+                    try {
+                        await controller.current?.addToAnki(state.selectedText, '', state.selectedText);
+                        alert(t('addedToAnki'));
+                        setState(s => ({...s, selectionToolbarVisible: false}));
+                    } catch(e: any) {
+                        alert(t('failed') + ': ' + e.message);
+                    }
+                }}
+              >
+                  <Icon name="plus-square" />
+              </button>
+              <button 
+                className="p-2 hover:bg-gray-700 rounded transition-colors" 
+                title="Jump Audio" 
+                onClick={() => state.selectedElementId && controller.current?.seekToElementId(state.selectedElementId)}
+                disabled={!state.selectedElementId}
+              >
+                  <Icon name="crosshairs" className={!state.selectedElementId ? "opacity-50" : ""} />
+              </button>
           </div>
       )}
 
