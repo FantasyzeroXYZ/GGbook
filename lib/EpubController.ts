@@ -1,27 +1,28 @@
+
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from '../types';
 import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
 
 export class EpubController {
-    // Internal State
+    // 内部状态
     private book: any = null;
     private rendition: any = null;
     private state: ReaderState;
     private updateReactState: StateUpdater;
     
-    // Settings
+    // 设置
     public settings: AppSettings;
     public ankiSettings: AnkiSettings;
     
-    // Audio
+    // 音频
     private audioPlayer: HTMLAudioElement;
     private mediaOverlayData: any[] = [];
     private audioGroups: Map<string, any[]> = new Map();
     private currentAudioFile: string | null = null;
     private currentAudioIndex: number = -1;
     
-    // Refs
+    // 引用
     private containerRef: HTMLElement | null = null;
 
     constructor(initialState: ReaderState, updateState: StateUpdater) {
@@ -31,7 +32,7 @@ export class EpubController {
         const savedSettings = localStorage.getItem('epubReaderSettings');
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
         
-        // Ensure language exists in settings (migration)
+        // 确保语言设置存在 (迁移处理)
         if (!this.settings.language) {
             this.settings.language = 'zh';
         }
@@ -60,31 +61,45 @@ export class EpubController {
     }
 
     // ==========================================
-    // Core Rendering (Native Epub.js)
+    // 核心渲染 (基于原生 Epub.js)
     // ==========================================
     public mount(element: HTMLElement) {
         this.containerRef = element;
-        // If book is already loaded but not rendered (e.g. strict mode re-mount), render it
+        // 如果书籍已加载但未渲染（例如 StrictMode 重新挂载），则进行渲染
         if (this.book && !this.rendition) {
             this.renderBook();
         }
     }
 
-    public async loadFile(file: File) {
+    // 销毁当前书籍实例
+    public destroy() {
+        if (this.rendition) {
+            this.rendition.destroy();
+            this.rendition = null;
+        }
+        if (this.book) {
+            this.book.destroy();
+            this.book = null;
+        }
+        this.stopAudio();
+    }
+
+    public async loadFile(file: File | Blob) {
         try {
             this.setState({ isLoading: true, loadingMessage: this.t('opening') });
             
+            // 清理旧实例
             if (this.book) {
                 this.book.destroy();
                 this.book = null;
             }
             this.rendition = null;
 
-            // Initialize Book
+            // 初始化书籍对象
             this.book = ePub(file);
             await this.book.ready;
 
-            // Load Metadata
+            // 加载元数据
             const metadata = await this.book.loaded.metadata;
             const navigation = await this.book.loaded.navigation;
             
@@ -94,7 +109,7 @@ export class EpubController {
                 loadingMessage: this.t('rendering')
             });
 
-            // Parse Audio Data
+            // 解析音频数据
             this.setState({ loadingMessage: this.t('parsingAudio') });
             try {
                 await this.loadAudioFromEPUB();
@@ -102,7 +117,7 @@ export class EpubController {
                 console.warn('Audio parse warning:', e);
             }
 
-            // Render
+            // 渲染
             if (this.containerRef) {
                 this.renderBook();
             }
@@ -119,16 +134,16 @@ export class EpubController {
     private renderBook() {
         if (!this.book || !this.containerRef) return;
 
-        // Create Rendition
+        // 创建 Rendition
         this.rendition = this.book.renderTo(this.containerRef, {
             width: '100%',
             height: '100%',
-            flow: 'paginated', // or 'scrolled'
+            flow: 'paginated', // 或 'scrolled'
             manager: 'default',
             allowScriptedContent: true
         });
 
-        // Register Themes
+        // 注册主题
         this.rendition.themes.register('light', { body: { color: '#333', background: '#fff' } });
         this.rendition.themes.register('dark', { body: { color: '#ddd', background: '#111' } });
         this.rendition.themes.register('sepia', { body: { color: '#5f4b32', background: '#f6f1d1' } });
@@ -136,7 +151,7 @@ export class EpubController {
             '.audio-highlight': { 'background-color': 'rgba(255, 255, 0, 0.4)', 'border-radius': '2px' } 
         });
 
-        // Events
+        // 事件监听
         this.rendition.on('relocated', (location: any) => {
             this.setState({ currentCfi: location.start.cfi });
         });
@@ -165,7 +180,7 @@ export class EpubController {
             }
         });
 
-        // Initial Display
+        // 初始显示
         this.rendition.display();
         this.applySettings();
     }
@@ -174,11 +189,8 @@ export class EpubController {
         if (!this.rendition) return;
         
         this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
-        // Force specific theme if darkMode is active overriding the selection
+        // 如果开启了深色模式，强制使用 dark 主题
         const theme = this.settings.darkMode ? 'dark' : this.settings.theme;
-        // If darkMode is on, we ignore 'light' or 'sepia' from the dropdown for the book content
-        // unless we want 'sepia' to persist in dark mode (usually not compatible). 
-        // Let's assume dark mode overrides everything.
         this.rendition.themes.select(theme);
     }
 
@@ -191,14 +203,10 @@ export class EpubController {
     }
 
     public setTheme(theme: string) {
-        // This is called when selecting from dropdown
+        // 下拉菜单选择主题时调用
         this.settings.theme = theme as any;
         this.saveSettings();
         if (this.rendition) {
-            // If dark mode is globally on, we might not want to switch to 'light' immediately
-            // But usually this dropdown controls the base theme.
-            // If user explicitly selects 'sepia', we should probably turn off global dark mode?
-            // Or just apply it.
             this.rendition.themes.select(theme);
         }
     }
@@ -211,7 +219,7 @@ export class EpubController {
             if (enabled) {
                 this.rendition.themes.select('dark');
             } else {
-                // Revert to the selected theme setting (e.g. sepia or light)
+                // 恢复到之前选择的主题 (如 sepia 或 light)
                 this.rendition.themes.select(this.settings.theme);
             }
         }
@@ -227,7 +235,7 @@ export class EpubController {
     }
 
     // ==========================================
-    // Navigation
+    // 导航
     // ==========================================
     public prevPage() {
         this.rendition?.prev();
@@ -242,7 +250,7 @@ export class EpubController {
     }
 
     // ==========================================
-    // Audio Logic
+    // 音频逻辑
     // ==========================================
     private bindAudioEvents() {
         this.audioPlayer.addEventListener('loadedmetadata', () => {
@@ -257,7 +265,7 @@ export class EpubController {
         });
         
         this.audioPlayer.addEventListener('ended', () => {
-            // Auto advance to next track
+            // 自动播放下一首
             this.playNextAudio();
         });
         
@@ -328,7 +336,7 @@ export class EpubController {
     }
 
     // ==========================================
-    // SMIL & Audio Parsing
+    // SMIL & 音频解析
     // ==========================================
     private async loadAudioFromEPUB() {
         const manifest = await this.book.loaded.manifest;
@@ -351,7 +359,7 @@ export class EpubController {
             this.audioGroups.get(file)!.push({ ...frag, originalIndex: idx });
         });
 
-        // Populate audio list
+        // 填充音频列表
         const audioList = Array.from(this.audioGroups.keys());
         this.setState({ audioList });
 
@@ -537,7 +545,7 @@ export class EpubController {
     }
 
     // ==========================================
-    // Dictionary & Anki
+    // 词典 & Anki
     // ==========================================
     public async lookupWord(word: string) {
         if (!word) return;

@@ -1,6 +1,16 @@
+
 export interface Book {
     title: string;
     author: string;
+}
+
+// 书架中的书籍元数据
+export interface LibraryBook {
+    id: string;
+    title: string;
+    author: string;
+    coverUrl?: string; // 封面图片的 blob URL 或 base64
+    addedAt: number;
 }
 
 export interface NavigationItem {
@@ -36,23 +46,23 @@ export interface AppSettings {
 export interface ReaderState {
     currentBook: Book | null;
     navigationMap: NavigationItem[];
-    currentCfi: string; // Current location in book
-    currentChapterLabel: string; // Display name of current chapter
+    currentCfi: string; // 书籍当前位置
+    currentChapterLabel: string; // 当前章节显示名称
     isSidebarOpen: boolean;
     isSettingsOpen: boolean;
     isDarkMode: boolean;
     isLoading: boolean;
     loadingMessage: string;
     
-    // Audio State
+    // 音频状态
     isAudioPlaying: boolean;
     audioCurrentTime: number;
     audioDuration: number;
     audioTitle: string;
-    audioList: string[]; // List of audio files in order
-    showAudioList: boolean; // Toggle for audio playlist UI
+    audioList: string[]; // 按顺序的音频文件列表
+    showAudioList: boolean; // 切换音频列表 UI
     
-    // Dictionary/Selection
+    // 词典/选择
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
@@ -91,7 +101,7 @@ export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
     tagsField: 'epub-reader'
 };
 
-// Declare globals for libraries loaded via CDN
+// 声明全局变量（通过 CDN 加载的库）
 declare global {
     const ePub: any;
     const JSZip: any;

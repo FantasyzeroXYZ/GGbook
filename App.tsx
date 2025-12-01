@@ -1,11 +1,20 @@
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
-import { AnkiSettings, AppSettings, Book, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from './types';
+import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from './types';
 import { translations, Language } from './lib/locales';
+import { db } from './lib/db';
 
 const Icon = ({ name }: { name: string }) => <i className={`fas fa-${name}`}></i>;
 
+type ViewMode = 'library' | 'reader';
+
 export default function App() {
+  // 视图状态：书架或阅读器
+  const [view, setView] = useState<ViewMode>('library');
+  const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
+
+  // 阅读器状态
   const [state, setState] = useState<ReaderState>({
     currentBook: null,
     navigationMap: [],
@@ -41,33 +50,36 @@ export default function App() {
   const controller = useRef<EpubController | null>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
 
-  // Translation helper
+  // 翻译助手
   const t = (key: keyof typeof translations['en']) => {
       const lang = tempSettings.language || 'zh';
       return translations[lang][key];
   };
 
+  // 初始化：加载设置和书架数据
   useEffect(() => {
+    // 实例化控制器（仅一次）
     const c = new EpubController(state, (partial) => {
         setState(prev => ({ ...prev, ...partial }));
     });
     controller.current = c;
     
+    // 同步设置
     setTempSettings(c.settings);
     setTempAnki(c.ankiSettings);
     
-    // Apply dark mode correctly on init
+    // 初始化时正确应用深色模式
     if (c.settings.darkMode) {
         document.body.classList.add('dark');
         setState(s => ({ ...s, isDarkMode: true }));
     }
 
-    // Mount epubjs if ref is ready
-    if (viewerRef.current) {
-        c.mount(viewerRef.current);
-    }
+    // 加载书架数据
+    refreshLibrary();
 
+    // 键盘快捷键监听
     const handleKey = (e: KeyboardEvent) => {
+        if (view !== 'reader') return; // 仅在阅读界面响应
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         if (e.key === 'ArrowLeft') c.prevPage();
         if (e.key === 'ArrowRight') c.nextPage();
@@ -80,8 +92,26 @@ export default function App() {
         c.stopAudio();
         window.removeEventListener('keydown', handleKey);
     };
-  }, []);
+  }, []); // 依赖项为空，只运行一次
 
+  // 当进入阅读器视图时，挂载渲染容器
+  useEffect(() => {
+      if (view === 'reader' && viewerRef.current && controller.current) {
+          controller.current.mount(viewerRef.current);
+      }
+  }, [view]);
+
+  // 加载书架
+  const refreshLibrary = async () => {
+      try {
+          const books = await db.getAllBooks();
+          setLibraryBooks(books);
+      } catch (e) {
+          console.error('Error loading library:', e);
+      }
+  };
+
+  // 设置更新
   const updateSetting = (key: keyof AppSettings, val: any) => {
       setTempSettings(prev => ({ ...prev, [key]: val }));
       if (controller.current) {
@@ -89,7 +119,7 @@ export default function App() {
           controller.current.saveSettings();
           
           if (key === 'darkMode') {
-             // Correct toggle logic for document.body
+             // document.body 的 class 切换逻辑
              if (val) {
                  document.body.classList.add('dark');
              } else {
@@ -107,21 +137,93 @@ export default function App() {
       }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 导入新书
+  const handleImportBook = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
-          controller.current?.loadFile(e.target.files[0]);
+          const file = e.target.files[0];
+          setState(s => ({ ...s, isLoading: true, loadingMessage: t('opening') }));
+          
+          try {
+              // 解析元数据但不渲染
+              const book = ePub(file);
+              await book.ready;
+              const meta = await book.loaded.metadata;
+              // 获取封面 (尝试)
+              let coverUrl = '';
+              try {
+                  const coverUrlRaw = await book.coverUrl();
+                  if (coverUrlRaw) {
+                      // 这里的 URL 是 blob URL，会失效。应该读取 blob 并转 base64 或 blob 存入 DB
+                      // 简单起见，这里暂存 base64 或依赖 epub.js 实时解析
+                      // 为了持久化，最好不存 blobURL。但 epub.js coverUrl() 返回的是 blob url。
+                      // 我们暂时留空，渲染列表时如果需要可以再次从文件解析，或者简化为只显示标题
+                  }
+              } catch (err) {}
+
+              const newBook: LibraryBook = {
+                  id: new Date().getTime().toString(), // 简单 ID
+                  title: meta.title || file.name,
+                  author: meta.creator || 'Unknown',
+                  addedAt: Date.now()
+              };
+
+              await db.addBook(newBook, file);
+              await refreshLibrary();
+              
+              book.destroy();
+              setState(s => ({ ...s, isLoading: false }));
+          } catch (err: any) {
+              console.error(err);
+              alert(t('failed') + ': ' + err.message);
+              setState(s => ({ ...s, isLoading: false }));
+          }
       }
   };
 
-  // Close Selection Toolbar on click away
+  // 打开书籍
+  const openBook = async (id: string) => {
+      setState(s => ({ ...s, isLoading: true, loadingMessage: t('opening') }));
+      try {
+          const fileBlob = await db.getBookFile(id);
+          if (fileBlob) {
+              setView('reader');
+              // 稍微延迟让 DOM 渲染出 reader div
+              setTimeout(() => {
+                  controller.current?.loadFile(fileBlob);
+              }, 100);
+          } else {
+              alert('Book file not found!');
+              setState(s => ({ ...s, isLoading: false }));
+          }
+      } catch (e) {
+          console.error(e);
+          setState(s => ({ ...s, isLoading: false }));
+      }
+  };
+
+  // 删除书籍
+  const deleteBook = async (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (confirm('确定要删除这本书吗？')) {
+          await db.deleteBook(id);
+          await refreshLibrary();
+      }
+  };
+
+  // 退出阅读
+  const exitReader = () => {
+      controller.current?.destroy();
+      setView('library');
+      setState(s => ({ ...s, currentBook: null }));
+  };
+
+  // 点击外部关闭工具栏
   useEffect(() => {
       const listener = (e: MouseEvent) => {
-          // Note: clicks inside iframe don't propagate here usually, this handles outside clicks
           const target = e.target as HTMLElement;
           if (!target.closest('#selection-toolbar')) {
               setState(prev => ({ ...prev, selectionToolbarVisible: false }));
           }
-          // Close audio list on click away if clicking outside player controls
           if (!target.closest('.audio-controls-area') && !target.closest('.audio-list-popover')) {
               setState(prev => ({ ...prev, showAudioList: false }));
           }
@@ -148,23 +250,91 @@ export default function App() {
       ));
   };
 
+  // ===================== 书架视图 =====================
+  if (view === 'library') {
+      return (
+        <div className={`min-h-screen flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
+            <div className="flex justify-between items-center p-4 bg-white dark:bg-gray-800 shadow-md">
+                <h1 className="text-xl font-bold flex items-center gap-2">
+                    <Icon name="book-reader" /> React EPUB Reader
+                </h1>
+                <div className="flex gap-4">
+                    <button onClick={() => updateSetting('darkMode', !state.isDarkMode)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <Icon name={state.isDarkMode ? 'sun' : 'moon'}/>
+                    </button>
+                </div>
+            </div>
+
+            <div className="flex-1 container mx-auto p-6">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-bold">我的书架</h2>
+                    <label className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded cursor-pointer transition-colors flex items-center gap-2">
+                        <Icon name="plus" /> 导入书籍
+                        <input type="file" className="hidden" accept=".epub" onChange={handleImportBook} />
+                    </label>
+                </div>
+
+                {state.isLoading && (
+                    <div className="text-center py-10">
+                        <div className="loader inline-block border-4 border-gray-200 border-t-blue-500 rounded-full w-8 h-8 animate-spin-custom mb-2"></div>
+                        <p>{state.loadingMessage}</p>
+                    </div>
+                )}
+
+                {!state.isLoading && libraryBooks.length === 0 && (
+                    <div className="text-center py-20 text-gray-500 border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
+                        <div className="text-6xl mb-4 opacity-20"><Icon name="book" /></div>
+                        <p className="text-xl">书架是空的</p>
+                        <p className="text-sm mt-2">点击右上角导入你的第一本书</p>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                    {libraryBooks.map(book => (
+                        <div key={book.id} onClick={() => openBook(book.id)} className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative">
+                            <div className="h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
+                                <Icon name="book" />
+                                {/* 如果有封面可以在这里展示 */}
+                            </div>
+                            <div className="p-4 flex-1">
+                                <h3 className="font-bold text-lg mb-1 truncate" title={book.title}>{book.title}</h3>
+                                <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{book.author}</p>
+                            </div>
+                            <button 
+                                onClick={(e) => deleteBook(book.id, e)}
+                                className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
+                                title="删除"
+                            >
+                                <Icon name="trash" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+      );
+  }
+
+  // ===================== 阅读器视图 =====================
   return (
     <div className={`h-screen flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
       
-      {/* Top Nav */}
+      {/* 顶部导航 */}
       <div className="flex justify-between items-center p-3 bg-gray-800 text-white shadow-md z-30 h-14 shrink-0 transition-colors duration-300">
         <div className="flex gap-4">
+            <button onClick={exitReader} className="hover:text-gray-300" title="返回书架"><Icon name="arrow-left"/></button>
+            <div className="h-6 w-px bg-gray-600 mx-2"></div>
             <button onClick={() => setState(s => ({ ...s, isSidebarOpen: !s.isSidebarOpen }))}><Icon name="bars"/></button>
             <button onClick={() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }))}><Icon name="cog"/></button>
         </div>
-        <div className="font-semibold truncate max-w-xs">{state.currentBook ? state.currentBook.title : 'React EPUB Reader'}</div>
+        <div className="font-semibold truncate max-w-xs">{state.currentBook ? state.currentBook.title : 'Loading...'}</div>
         <button onClick={() => updateSetting('darkMode', !state.isDarkMode)}>
              <Icon name={state.isDarkMode ? 'sun' : 'moon'}/>
         </button>
       </div>
 
       <div className="flex-1 relative overflow-hidden flex">
-          {/* Sidebar */}
+          {/* 侧边栏 (目录) */}
           <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t('tableOfContents')}</span>
@@ -175,20 +345,8 @@ export default function App() {
                </div>
           </div>
 
-          {/* Reader Area */}
+          {/* 阅读区域 */}
           <div className="flex-1 relative flex flex-col overflow-hidden">
-               {!state.currentBook && !state.isLoading && (
-                   <div className="flex-1 flex flex-col items-center justify-center p-10 m-10 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600">
-                       <div className="text-4xl text-gray-400 mb-4"><Icon name="book-open"/></div>
-                       <h3 className="text-xl mt-4 mb-2 text-gray-700 dark:text-gray-300">{t('uploadTitle')}</h3>
-                       <p className="text-gray-500 mb-6">{t('uploadDesc')}</p>
-                       <label className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded cursor-pointer transition-colors">
-                           {t('selectFile')}
-                           <input type="file" className="hidden" accept=".epub" onChange={handleFileUpload} />
-                       </label>
-                   </div>
-               )}
-
                {state.isLoading && (
                    <div className="flex-1 flex flex-col items-center justify-center">
                        <div className="loader border-4 border-gray-200 border-t-blue-500 rounded-full w-12 h-12 animate-spin-custom mb-4"></div>
@@ -196,7 +354,7 @@ export default function App() {
                    </div>
                )}
 
-               {/* EPub.js Container */}
+               {/* EPub.js 容器 */}
                <div 
                  id="viewer" 
                  ref={viewerRef} 
@@ -215,7 +373,7 @@ export default function App() {
                )}
           </div>
 
-          {/* Settings Sidebar */}
+          {/* 设置侧边栏 */}
           <div className={`fixed inset-y-0 right-0 w-80 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t('settings')}</span>
@@ -326,7 +484,7 @@ export default function App() {
           </div>
       </div>
 
-      {/* Audio List Popover */}
+      {/* 音频列表弹窗 */}
       {state.showAudioList && state.audioList.length > 0 && (
           <div className="audio-list-popover fixed bottom-24 left-4 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border dark:border-gray-700 max-h-64 overflow-y-auto z-50 text-gray-800 dark:text-gray-200">
               <div className="p-3 border-b dark:border-gray-700 font-bold sticky top-0 bg-white dark:bg-gray-800 flex justify-between items-center">
@@ -350,7 +508,7 @@ export default function App() {
           </div>
       )}
 
-      {/* Footer / Audio Player */}
+      {/* 底部 / 音频播放器 */}
       <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
            <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
