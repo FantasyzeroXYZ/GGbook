@@ -48,6 +48,8 @@ export interface ReaderState {
     audioCurrentTime: number;
     audioDuration: number;
     audioTitle: string;
+    audioList: string[]; // List of audio files in order
+    showAudioList: boolean; // Toggle for audio playlist UI
     
     // Dictionary/Selection
     selectionToolbarVisible: boolean;

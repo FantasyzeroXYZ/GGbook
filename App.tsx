@@ -12,7 +12,6 @@ export default function App() {
     currentSectionIndex: 0,
     currentCfi: '',
     currentChapterLabel: '',
-    sections: [],
     isSidebarOpen: false,
     isSettingsOpen: false,
     isDarkMode: false,
@@ -22,6 +21,8 @@ export default function App() {
     audioCurrentTime: 0,
     audioDuration: 0,
     audioTitle: '',
+    audioList: [],
+    showAudioList: false,
     selectionToolbarVisible: false,
     selectionRect: null,
     selectedText: '',
@@ -106,6 +107,10 @@ export default function App() {
           const target = e.target as HTMLElement;
           if (!target.closest('#selection-toolbar')) {
               setState(prev => ({ ...prev, selectionToolbarVisible: false }));
+          }
+          // Close audio list on click away if clicking outside player controls
+          if (!target.closest('.audio-controls-area') && !target.closest('.audio-list-popover')) {
+              setState(prev => ({ ...prev, showAudioList: false }));
           }
       };
       document.addEventListener('mouseup', listener);
@@ -301,9 +306,33 @@ export default function App() {
           </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0">
+      {/* Audio List Popover */}
+      {state.showAudioList && state.audioList.length > 0 && (
+          <div className="audio-list-popover fixed bottom-24 left-4 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border dark:border-gray-700 max-h-64 overflow-y-auto z-50">
+              <div className="p-3 border-b dark:border-gray-700 font-bold sticky top-0 bg-white dark:bg-gray-800 flex justify-between">
+                  <span>Audio Tracks</span>
+                  <span className="text-xs text-gray-500">{state.audioList.length} tracks</span>
+              </div>
+              <div>
+                  {state.audioList.map((file, i) => (
+                      <div 
+                        key={i} 
+                        className={`p-3 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 truncate ${state.audioTitle === file.split('/').pop() ? 'text-blue-500 font-bold bg-blue-50 dark:bg-gray-700' : ''}`}
+                        onClick={() => {
+                            controller.current?.playAudioFile(file);
+                            setState(prev => ({ ...prev, showAudioList: false }));
+                        }}
+                      >
+                          {i + 1}. {file.split('/').pop()}
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )}
+
+      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area">
            <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
-               <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 flex items-center justify-center" onClick={() => controller.current?.stopAudio()}><Icon name="stop"/></button>
+               <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 flex items-center justify-center" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 flex items-center justify-center" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
                <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg" onClick={() => controller.current?.toggleAudio()}>
                    <Icon name={state.isAudioPlaying ? "pause" : "play"}/>

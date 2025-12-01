@@ -128,19 +128,13 @@ export class EpubController {
         // Events
         this.rendition.on('relocated', (location: any) => {
             this.setState({ currentCfi: location.start.cfi });
-            // Try to map CFI to a chapter label if possible
-            // Simplified: Use percentage or just let UI handle navigation
         });
 
         this.rendition.on('selected', (cfiRange: string, contents: any) => {
             const range = contents.range(cfiRange);
             const text = range.toString();
             
-            // Get screen coordinates for toolbar
             const rect = range.getBoundingClientRect();
-            // Note: coordinates are inside iframe, need to offset if we render toolbar outside
-            // However, React state update usually happens in main window context.
-            // We might need to map iframe coordinates to window coordinates.
             const iframe = this.containerRef?.querySelector('iframe');
             const iframeRect = iframe?.getBoundingClientRect();
             
@@ -150,7 +144,7 @@ export class EpubController {
                     top: rect.top + iframeRect.top,
                     width: rect.width,
                     height: rect.height
-                } as DOMRect; // Fake it enough for UI
+                } as DOMRect; 
 
                 this.setState({
                     selectionToolbarVisible: true,
@@ -158,9 +152,6 @@ export class EpubController {
                     selectedText: text
                 });
             }
-            
-            // Allow default copy behavior?
-            // contents.window.getSelection().addRange(range);
         });
 
         // Initial Display
@@ -173,8 +164,6 @@ export class EpubController {
         
         this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
         this.rendition.themes.select(this.settings.theme);
-        
-        // Also apply dark mode to main app container if needed, already handled in App via state
     }
 
     public setFontSize(size: string) {
@@ -233,7 +222,8 @@ export class EpubController {
         });
         
         this.audioPlayer.addEventListener('ended', () => {
-            this.setState({ isAudioPlaying: false });
+            // Auto advance to next track
+            this.playNextAudio();
         });
         
         this.audioPlayer.addEventListener('error', (e) => {
@@ -256,6 +246,26 @@ export class EpubController {
                 const first = this.audioGroups.keys().next().value;
                 this.playAudioFile(first);
             }
+        }
+    }
+
+    public toggleAudioList() {
+        this.setState({ showAudioList: !this.state.showAudioList });
+    }
+
+    public playNextAudio() {
+        const list = this.state.audioList;
+        const current = this.currentAudioFile;
+        if (!list || list.length === 0 || !current) {
+            this.setState({ isAudioPlaying: false });
+            return;
+        }
+
+        const idx = list.indexOf(current);
+        if (idx !== -1 && idx < list.length - 1) {
+            this.playAudioFile(list[idx + 1]);
+        } else {
+            this.setState({ isAudioPlaying: false });
         }
     }
 
@@ -305,6 +315,10 @@ export class EpubController {
             if (!this.audioGroups.has(file)) this.audioGroups.set(file, []);
             this.audioGroups.get(file)!.push({ ...frag, originalIndex: idx });
         });
+
+        // Populate audio list
+        const audioList = Array.from(this.audioGroups.keys());
+        this.setState({ audioList });
 
         if (this.audioGroups.size > 0 && this.settings.autoPlayAudio) {
             const firstKey = this.audioGroups.keys().next().value;
@@ -362,7 +376,6 @@ export class EpubController {
     }
 
     private async findAudioBlob(path: string): Promise<string | null> {
-        // Robust audio finding strategy (kept from previous iteration)
         try {
              let blob = await this.book.archive.getBlob(path);
              if (blob) return URL.createObjectURL(blob);
@@ -445,31 +458,20 @@ export class EpubController {
             const id = parts.length > 1 ? parts[1] : null;
             
             if (id) {
-                // Remove previous highlight
                 this.clearAudioHighlight();
-                
-                // Navigate to the element if needed
-                // display() is smart: if already there, it does nothing or minor adjustment
-                // If we want smooth scrolling in scrolled mode, different logic needed.
-                // For paginated, display(target) turns the page.
                 this.rendition.display(current.textSrc);
 
-                // Apply Highlight
-                // Since display() is async, we might miss the DOM element if we check immediately.
-                // However, we can inject CSS classes into the view.
                 const apply = () => {
                     const contents = this.rendition.getContents();
                     for(const c of contents) {
                         const el = c.document.getElementById(id);
                         if (el) {
                             el.classList.add('audio-highlight');
-                            // Add custom style directly if theme not working
                             el.style.backgroundColor = 'rgba(255, 255, 0, 0.3)';
                         }
                     }
                 };
                 
-                // Try immediately and after a delay
                 apply();
                 setTimeout(apply, 200);
             }
