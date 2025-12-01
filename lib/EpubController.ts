@@ -71,7 +71,7 @@ export class EpubController {
         }
     }
 
-    // 销毁当前书籍实例
+    // 销毁当前书籍实例并重置所有状态
     public destroy() {
         if (this.rendition) {
             this.rendition.destroy();
@@ -81,20 +81,33 @@ export class EpubController {
             this.book.destroy();
             this.book = null;
         }
-        this.stopAudio();
+        
+        // 彻底重置音频状态
+        this.audioPlayer.pause();
+        this.audioPlayer.src = ''; // 清除音频源
+        this.mediaOverlayData = [];
+        this.audioGroups.clear();
+        this.currentAudioFile = null;
+        this.currentAudioIndex = -1;
+        
+        // 重置相关 UI 状态
+        this.setState({
+            isAudioPlaying: false,
+            audioCurrentTime: 0,
+            audioDuration: 0,
+            audioTitle: '',
+            audioList: [],
+            showAudioList: false
+        });
     }
 
     public async loadFile(file: File | Blob) {
         try {
+            // 先清理旧状态
+            this.destroy();
+
             this.setState({ isLoading: true, loadingMessage: this.t('opening') });
             
-            // 清理旧实例
-            if (this.book) {
-                this.book.destroy();
-                this.book = null;
-            }
-            this.rendition = null;
-
             // 初始化书籍对象
             this.book = ePub(file);
             await this.book.ready;

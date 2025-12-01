@@ -5,7 +5,7 @@ import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_
 import { translations, Language } from './lib/locales';
 import { db } from './lib/db';
 
-const Icon = ({ name }: { name: string }) => <i className={`fas fa-${name}`}></i>;
+const Icon = ({ name, className }: { name: string; className?: string }) => <i className={`fas fa-${name} ${className || ''}`}></i>;
 
 type ViewMode = 'library' | 'reader';
 
@@ -148,22 +148,29 @@ export default function App() {
               const book = ePub(file);
               await book.ready;
               const meta = await book.loaded.metadata;
-              // 获取封面 (尝试)
+              
+              // 获取封面并转换为 Base64
               let coverUrl = '';
               try {
-                  const coverUrlRaw = await book.coverUrl();
-                  if (coverUrlRaw) {
-                      // 这里的 URL 是 blob URL，会失效。应该读取 blob 并转 base64 或 blob 存入 DB
-                      // 简单起见，这里暂存 base64 或依赖 epub.js 实时解析
-                      // 为了持久化，最好不存 blobURL。但 epub.js coverUrl() 返回的是 blob url。
-                      // 我们暂时留空，渲染列表时如果需要可以再次从文件解析，或者简化为只显示标题
+                  const coverBlobUrl = await book.coverUrl();
+                  if (coverBlobUrl) {
+                      const response = await fetch(coverBlobUrl);
+                      const blob = await response.blob();
+                      coverUrl = await new Promise((resolve) => {
+                          const reader = new FileReader();
+                          reader.onloadend = () => resolve(reader.result as string);
+                          reader.readAsDataURL(blob);
+                      });
                   }
-              } catch (err) {}
+              } catch (err) {
+                  console.warn('Cover extraction failed:', err);
+              }
 
               const newBook: LibraryBook = {
                   id: new Date().getTime().toString(), // 简单 ID
                   title: meta.title || file.name,
                   author: meta.creator || 'Unknown',
+                  coverUrl: coverUrl,
                   addedAt: Date.now()
               };
 
@@ -292,9 +299,12 @@ export default function App() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                     {libraryBooks.map(book => (
                         <div key={book.id} onClick={() => openBook(book.id)} className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative">
-                            <div className="h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                                <Icon name="book" />
-                                {/* 如果有封面可以在这里展示 */}
+                            <div className="h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400 overflow-hidden">
+                                {book.coverUrl ? (
+                                    <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
+                                ) : (
+                                    <Icon name="book" className="text-4xl" />
+                                )}
                             </div>
                             <div className="p-4 flex-1">
                                 <h3 className="font-bold text-lg mb-1 truncate" title={book.title}>{book.title}</h3>
