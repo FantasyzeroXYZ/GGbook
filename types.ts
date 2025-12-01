@@ -4,6 +4,13 @@ export interface Book {
     author: string;
 }
 
+export interface BookProgress {
+    cfi: string;
+    audioSrc?: string;
+    audioTime?: number;
+    timestamp: number;
+}
+
 // 书架中的书籍元数据
 export interface LibraryBook {
     id: string;
@@ -11,6 +18,7 @@ export interface LibraryBook {
     author: string;
     coverUrl?: string; // 封面图片的 blob URL 或 base64
     addedAt: number;
+    progress?: BookProgress;
 }
 
 export interface NavigationItem {
@@ -61,6 +69,7 @@ export interface ReaderState {
     audioTitle: string;
     audioList: string[]; // 按顺序的音频文件列表
     showAudioList: boolean; // 切换音频列表 UI
+    currentAudioFile?: string | null; // 当前音频文件路径
     
     // 词典/选词状态
     selectionToolbarVisible: boolean;

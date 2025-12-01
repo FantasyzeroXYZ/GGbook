@@ -1,7 +1,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
-import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from './types';
+import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress } from './types';
 import { translations, Language } from './lib/locales';
 import { db } from './lib/db';
 
@@ -13,6 +13,8 @@ export default function App() {
   // 视图状态：书架或阅读器
   const [view, setView] = useState<ViewMode>('library');
   const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
+  // 当前打开书籍的 ID，用于保存进度
+  const [currentBookId, setCurrentBookId] = useState<string | null>(null);
 
   // 阅读器状态
   const [state, setState] = useState<ReaderState>({
@@ -31,6 +33,7 @@ export default function App() {
     audioTitle: '',
     audioList: [],
     showAudioList: false,
+    currentAudioFile: null,
     selectionToolbarVisible: false,
     selectionRect: null,
     selectedText: '',
@@ -93,6 +96,25 @@ export default function App() {
         window.removeEventListener('keydown', handleKey);
     };
   }, []); // 依赖项为空，只运行一次
+
+  // 自动保存进度 (防抖)
+  useEffect(() => {
+      if (view !== 'reader' || !currentBookId) return;
+      
+      const saveTimer = setTimeout(() => {
+          if (state.currentCfi) {
+              const progress: BookProgress = {
+                  cfi: state.currentCfi,
+                  audioSrc: state.currentAudioFile || undefined,
+                  audioTime: state.audioCurrentTime,
+                  timestamp: Date.now()
+              };
+              db.updateBookProgress(currentBookId, progress).catch(err => console.error("Save progress failed", err));
+          }
+      }, 2000); // 2秒无变化后保存
+
+      return () => clearTimeout(saveTimer);
+  }, [state.currentCfi, state.audioCurrentTime, currentBookId, view, state.currentAudioFile]);
 
   // 当进入阅读器视图时，挂载渲染容器
   useEffect(() => {
@@ -188,15 +210,16 @@ export default function App() {
   };
 
   // 打开书籍
-  const openBook = async (id: string) => {
+  const openBook = async (book: LibraryBook) => {
       setState(s => ({ ...s, isLoading: true, loadingMessage: t('opening') }));
       try {
-          const fileBlob = await db.getBookFile(id);
+          const fileBlob = await db.getBookFile(book.id);
           if (fileBlob) {
+              setCurrentBookId(book.id);
               setView('reader');
               // 稍微延迟让 DOM 渲染出 reader div
               setTimeout(() => {
-                  controller.current?.loadFile(fileBlob);
+                  controller.current?.loadFile(fileBlob, book.progress);
               }, 100);
           } else {
               alert('Book file not found!');
@@ -222,6 +245,9 @@ export default function App() {
       controller.current?.destroy();
       setView('library');
       setState(s => ({ ...s, currentBook: null }));
+      setCurrentBookId(null);
+      // 刷新书架以更新进度显示（可选）
+      refreshLibrary();
   };
 
   // 点击外部关闭工具栏
@@ -272,10 +298,10 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="flex-1 container mx-auto p-6">
+            <div className="flex-1 container mx-auto p-4 md:p-6">
                 <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold">我的书架</h2>
-                    <label className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded cursor-pointer transition-colors flex items-center gap-2">
+                    <h2 className="text-xl md:text-2xl font-bold">我的书架</h2>
+                    <label className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded cursor-pointer transition-colors flex items-center gap-2">
                         <Icon name="plus" /> 导入书籍
                         <input type="file" className="hidden" accept=".epub" onChange={handleImportBook} />
                     </label>
@@ -296,26 +322,34 @@ export default function App() {
                     </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 md:gap-6">
                     {libraryBooks.map(book => (
-                        <div key={book.id} onClick={() => openBook(book.id)} className="bg-white dark:bg-gray-800 rounded-lg shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative">
-                            <div className="h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400 overflow-hidden">
+                        <div key={book.id} onClick={() => openBook(book)} className="bg-white dark:bg-gray-800 rounded-md shadow hover:shadow-lg transition-shadow cursor-pointer overflow-hidden border dark:border-gray-700 flex flex-col group relative">
+                            <div className="h-24 sm:h-32 md:h-48 bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400 overflow-hidden">
                                 {book.coverUrl ? (
                                     <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
                                 ) : (
-                                    <Icon name="book" className="text-4xl" />
+                                    <Icon name="book" className="text-2xl md:text-4xl" />
                                 )}
                             </div>
-                            <div className="p-4 flex-1">
-                                <h3 className="font-bold text-lg mb-1 truncate" title={book.title}>{book.title}</h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 truncate">{book.author}</p>
+                            <div className="p-2 flex-1 flex flex-col justify-between">
+                                <div>
+                                    <h3 className="font-bold text-xs md:text-base mb-0.5 line-clamp-2" title={book.title}>{book.title}</h3>
+                                    <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400 truncate">{book.author}</p>
+                                </div>
+                                {book.progress && (
+                                    <div className="mt-1 flex items-center gap-1 text-[10px] text-gray-400">
+                                        <Icon name="history" className="text-[8px]" />
+                                        <span>已读</span>
+                                    </div>
+                                )}
                             </div>
                             <button 
                                 onClick={(e) => deleteBook(book.id, e)}
-                                className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
+                                className="absolute top-1 right-1 p-1 md:p-2 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
                                 title="删除"
                             >
-                                <Icon name="trash" />
+                                <Icon name="trash" className="text-xs md:text-sm"/>
                             </button>
                         </div>
                     ))}
@@ -520,7 +554,7 @@ export default function App() {
 
       {/* 底部 / 音频播放器 */}
       <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
-           <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
+           <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
                <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg" onClick={() => controller.current?.toggleAudio()}>

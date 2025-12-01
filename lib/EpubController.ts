@@ -1,5 +1,5 @@
 
-import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from '../types';
+import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress } from '../types';
 import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
@@ -98,11 +98,12 @@ export class EpubController {
             audioDuration: 0,
             audioTitle: '',
             audioList: [],
-            showAudioList: false
+            showAudioList: false,
+            currentAudioFile: null
         });
     }
 
-    public async loadFile(file: File | Blob) {
+    public async loadFile(file: File | Blob, initialProgress?: BookProgress) {
         try {
             // 先清理旧状态
             this.destroy();
@@ -134,6 +135,22 @@ export class EpubController {
             // 渲染
             if (this.containerRef) {
                 this.renderBook();
+                
+                // 恢复进度
+                if (initialProgress) {
+                    if (initialProgress.cfi) {
+                        this.display(initialProgress.cfi);
+                    }
+                    
+                    if (initialProgress.audioSrc) {
+                        // 恢复音频位置但不自动播放
+                        await this.playAudioFile(initialProgress.audioSrc, false);
+                        if (initialProgress.audioTime) {
+                            this.audioPlayer.currentTime = initialProgress.audioTime;
+                            this.setState({ audioCurrentTime: initialProgress.audioTime });
+                        }
+                    }
+                }
             }
 
             this.setState({ isLoading: false });
@@ -377,9 +394,11 @@ export class EpubController {
         const audioList = Array.from(this.audioGroups.keys());
         this.setState({ audioList });
 
-        if (this.audioGroups.size > 0 && this.settings.autoPlayAudio) {
-            const firstKey = this.audioGroups.keys().next().value;
-            setTimeout(() => this.playAudioFile(firstKey), 1000);
+        // 注意：移除自动播放逻辑，仅加载列表
+        if (this.audioGroups.size > 0 && !this.currentAudioFile) {
+             // 可以预设第一个，但不播放
+             // const firstKey = this.audioGroups.keys().next().value;
+             // this.currentAudioFile = firstKey;
         }
     }
 
@@ -481,17 +500,22 @@ export class EpubController {
         return null;
     }
 
-    public async playAudioFile(audioPath: string) {
+    public async playAudioFile(audioPath: string, autoPlay: boolean = true) {
         try {
             this.currentAudioFile = audioPath;
             const url = await this.findAudioBlob(audioPath);
             if (url) {
                 this.audioPlayer.src = url;
-                this.audioPlayer.play().catch(e => console.error('Play failed', e));
-                this.setState({ isAudioPlaying: true, audioTitle: audioPath.split('/').pop() || 'Audio' });
+                const title = audioPath.split('/').pop() || 'Audio';
+                if (autoPlay) {
+                    this.audioPlayer.play().catch(e => console.error('Play failed', e));
+                    this.setState({ isAudioPlaying: true, audioTitle: title, currentAudioFile: audioPath });
+                } else {
+                    this.setState({ isAudioPlaying: false, audioTitle: title, currentAudioFile: audioPath });
+                }
             } else {
                 console.error("Audio not found:", audioPath);
-                this.setState({ audioTitle: this.t('audioError') });
+                this.setState({ audioTitle: this.t('audioError'), currentAudioFile: audioPath });
             }
         } catch (e) { console.error("Play error", e); }
     }
