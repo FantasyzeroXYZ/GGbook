@@ -1,4 +1,5 @@
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from '../types';
+import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
 
@@ -30,6 +31,11 @@ export class EpubController {
         const savedSettings = localStorage.getItem('epubReaderSettings');
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
         
+        // Ensure language exists in settings (migration)
+        if (!this.settings.language) {
+            this.settings.language = 'zh';
+        }
+
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
 
@@ -48,6 +54,11 @@ export class EpubController {
         this.updateReactState(partial);
     }
 
+    private t(key: keyof typeof translations['en']) {
+        const lang = this.settings.language || 'zh';
+        return translations[lang][key];
+    }
+
     // ==========================================
     // Core Rendering (Native Epub.js)
     // ==========================================
@@ -61,7 +72,7 @@ export class EpubController {
 
     public async loadFile(file: File) {
         try {
-            this.setState({ isLoading: true, loadingMessage: 'Opening EPUB...' });
+            this.setState({ isLoading: true, loadingMessage: this.t('opening') });
             
             if (this.book) {
                 this.book.destroy();
@@ -80,11 +91,11 @@ export class EpubController {
             this.setState({
                 currentBook: { title: metadata.title, author: metadata.creator },
                 navigationMap: navigation.toc || [],
-                loadingMessage: 'Rendering...'
+                loadingMessage: this.t('rendering')
             });
 
             // Parse Audio Data
-            this.setState({ loadingMessage: 'Parsing Audio Data...' });
+            this.setState({ loadingMessage: this.t('parsingAudio') });
             try {
                 await this.loadAudioFromEPUB();
             } catch (e) {
@@ -101,7 +112,7 @@ export class EpubController {
         } catch (e: any) {
             console.error(e);
             this.setState({ isLoading: false });
-            alert('Error loading book: ' + e.message);
+            alert(this.t('failed') + ': ' + e.message);
         }
     }
 
@@ -163,7 +174,12 @@ export class EpubController {
         if (!this.rendition) return;
         
         this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
-        this.rendition.themes.select(this.settings.theme);
+        // Force specific theme if darkMode is active overriding the selection
+        const theme = this.settings.darkMode ? 'dark' : this.settings.theme;
+        // If darkMode is on, we ignore 'light' or 'sepia' from the dropdown for the book content
+        // unless we want 'sepia' to persist in dark mode (usually not compatible). 
+        // Let's assume dark mode overrides everything.
+        this.rendition.themes.select(theme);
     }
 
     public setFontSize(size: string) {
@@ -175,10 +191,29 @@ export class EpubController {
     }
 
     public setTheme(theme: string) {
+        // This is called when selecting from dropdown
         this.settings.theme = theme as any;
         this.saveSettings();
         if (this.rendition) {
+            // If dark mode is globally on, we might not want to switch to 'light' immediately
+            // But usually this dropdown controls the base theme.
+            // If user explicitly selects 'sepia', we should probably turn off global dark mode?
+            // Or just apply it.
             this.rendition.themes.select(theme);
+        }
+    }
+
+    public toggleDarkMode(enabled: boolean) {
+        this.settings.darkMode = enabled;
+        this.saveSettings();
+        
+        if (this.rendition) {
+            if (enabled) {
+                this.rendition.themes.select('dark');
+            } else {
+                // Revert to the selected theme setting (e.g. sepia or light)
+                this.rendition.themes.select(this.settings.theme);
+            }
         }
     }
 
@@ -434,7 +469,7 @@ export class EpubController {
                 this.setState({ isAudioPlaying: true, audioTitle: audioPath.split('/').pop() || 'Audio' });
             } else {
                 console.error("Audio not found:", audioPath);
-                this.setState({ audioTitle: 'Audio Not Found' });
+                this.setState({ audioTitle: this.t('audioError') });
             }
         } catch (e) { console.error("Play error", e); }
     }

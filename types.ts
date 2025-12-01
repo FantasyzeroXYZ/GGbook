@@ -22,6 +22,7 @@ export interface AnkiSettings {
 }
 
 export interface AppSettings {
+    language: 'en' | 'zh';
     fontSize: 'small' | 'medium' | 'large' | 'xlarge';
     theme: 'light' | 'dark' | 'sepia';
     offlineMode: boolean;
@@ -68,6 +69,7 @@ export interface ReaderState {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+    language: 'zh',
     fontSize: 'medium',
     theme: 'light',
     offlineMode: false,
