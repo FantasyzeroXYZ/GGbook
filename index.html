@@ -4,13 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>React EPUB Reader</title>
-    <!-- Dependencies -->
+    <!-- 依赖项 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-      /* Custom scrollbar hiding for paged content */
+      /* 分页内容的自定义滚动条隐藏 */
       .no-scrollbar::-webkit-scrollbar {
         display: none;
       }
@@ -18,7 +18,7 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
-      /* Animation for loader */
+      /* 加载动画 */
       @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
@@ -26,7 +26,7 @@
       .animate-spin-custom {
         animation: spin 1s linear infinite;
       }
-      /* Range slider custom styles */
+      /* 范围滑块自定义样式 */
       input[type=range]::-webkit-slider-thumb {
         -webkit-appearance: none;
         height: 12px;
@@ -43,7 +43,7 @@
         background: rgba(255,255,255,0.3);
         border-radius: 2px;
       }
-      /* Dark mode overrides for slider */
+      /* 深色模式下滑块覆盖样式 */
       .dark input[type=range]::-webkit-slider-thumb {
          background: #3498db;
       }

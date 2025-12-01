@@ -50,6 +50,7 @@ export class EpubController {
         });
     }
 
+    // 辅助方法：同步本地状态和 React 状态
     private setState(partial: Partial<ReaderState>) {
         this.state = { ...this.state, ...partial };
         this.updateReactState(partial);
@@ -147,7 +148,7 @@ export class EpubController {
     private renderBook() {
         if (!this.book || !this.containerRef) return;
 
-        // 创建 Rendition
+        // 创建渲染实例
         this.rendition = this.book.renderTo(this.containerRef, {
             width: '100%',
             height: '100%',

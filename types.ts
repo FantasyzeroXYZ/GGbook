@@ -62,7 +62,7 @@ export interface ReaderState {
     audioList: string[]; // 按顺序的音频文件列表
     showAudioList: boolean; // 切换音频列表 UI
     
-    // 词典/选择
+    // 词典/选词状态
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
@@ -71,7 +71,7 @@ export interface ReaderState {
     dictionaryLoading: boolean;
     dictionaryError: string | null;
 
-    // Anki
+    // Anki 集成
     ankiConnected: boolean;
     ankiDecks: string[];
     ankiModels: string[];
@@ -101,7 +101,7 @@ export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
     tagsField: 'epub-reader'
 };
 
-// 声明全局变量（通过 CDN 加载的库）
+// 声明通过 CDN 加载的全局库
 declare global {
     const ePub: any;
     const JSZip: any;
