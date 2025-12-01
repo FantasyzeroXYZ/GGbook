@@ -3,13 +3,6 @@ export interface Book {
     author: string;
 }
 
-export interface Chapter {
-    id: string;
-    title: string;
-    content: string;
-    href: string;
-}
-
 export interface NavigationItem {
     id: string;
     href: string;
@@ -41,11 +34,9 @@ export interface AppSettings {
 
 export interface ReaderState {
     currentBook: Book | null;
-    currentChapterIndex: number;
-    chapters: Chapter[];
     navigationMap: NavigationItem[];
-    currentSectionIndex: number;
-    sections: string[]; // HTML strings of pages
+    currentCfi: string; // Current location in book
+    currentChapterLabel: string; // Display name of current chapter
     isSidebarOpen: boolean;
     isSettingsOpen: boolean;
     isDarkMode: boolean;

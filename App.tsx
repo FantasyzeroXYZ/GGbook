@@ -1,19 +1,17 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
-import { AnkiSettings, AppSettings, Book, Chapter, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from './types';
+import { AnkiSettings, AppSettings, Book, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from './types';
 
-// Icons
 const Icon = ({ name }: { name: string }) => <i className={`fas fa-${name}`}></i>;
 
 export default function App() {
-  // ===================== State =====================
-  // We mirror the internal state of the controller here for reactivity
   const [state, setState] = useState<ReaderState>({
     currentBook: null,
     currentChapterIndex: 0,
-    chapters: [],
     navigationMap: [],
     currentSectionIndex: 0,
+    currentCfi: '',
+    currentChapterLabel: '',
     sections: [],
     isSidebarOpen: false,
     isSettingsOpen: false,
@@ -37,32 +35,28 @@ export default function App() {
     ankiFields: []
   });
 
-  // Settings local state (syncs with controller on save)
   const [tempSettings, setTempSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [tempAnki, setTempAnki] = useState<AnkiSettings>(DEFAULT_ANKI_SETTINGS);
 
-  // Controller Ref
   const controller = useRef<EpubController | null>(null);
-  const readerContentRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
 
-  // ===================== Initialization =====================
   useEffect(() => {
-    // Initialize controller only once
     const c = new EpubController(state, (partial) => {
         setState(prev => ({ ...prev, ...partial }));
     });
     controller.current = c;
     
-    // Load saved settings into local state
     setTempSettings(c.settings);
     setTempAnki(c.ankiSettings);
     
-    // Apply dark mode immediately
-    if (c.settings.darkMode) {
-        document.body.classList.add('dark');
+    if (c.settings.darkMode) document.body.classList.add('dark');
+
+    // Mount epubjs if ref is ready
+    if (viewerRef.current) {
+        c.mount(viewerRef.current);
     }
 
-    // Keyboard listeners
     const handleKey = (e: KeyboardEvent) => {
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         if (e.key === 'ArrowLeft') c.prevPage();
@@ -70,112 +64,63 @@ export default function App() {
         if (e.key === ' ') { e.preventDefault(); c.toggleAudio(); }
     };
 
-    // Resize listener for layout refresh
-    let resizeTimer: any;
-    const handleResize = () => {
-        clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => {
-            c.refreshLayout();
-        }, 200);
-    };
-
     window.addEventListener('keydown', handleKey);
-    window.addEventListener('resize', handleResize);
     
     return () => {
         c.stopAudio();
         window.removeEventListener('keydown', handleKey);
-        window.removeEventListener('resize', handleResize);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Update container ref whenever book changes to ensure layout logic has access to DOM
-  useEffect(() => {
-    if (state.currentBook && readerContentRef.current && controller.current) {
-        controller.current.setContainerRef(readerContentRef.current);
-        // Refresh layout now that we have the actual DOM container
-        controller.current.refreshLayout();
-    }
-  }, [state.currentBook]);
-
-  // Sync Settings when they change locally
   const updateSetting = (key: keyof AppSettings, val: any) => {
       setTempSettings(prev => ({ ...prev, [key]: val }));
       if (controller.current) {
-          // Cast to any to avoid "Type 'any' is not assignable to type 'never'" error
           (controller.current.settings as any)[key] = val;
           controller.current.saveSettings();
+          
           if (key === 'darkMode') {
              document.body.classList.toggle('dark', val);
              setState(s => ({ ...s, isDarkMode: val }));
-          }
-          if (key === 'audioVolume') {
+             // Re-apply theme to rendition
+             controller.current.setTheme(val ? 'dark' : 'light');
+          } else if (key === 'theme') {
+             controller.current.setTheme(val);
+          } else if (key === 'audioVolume') {
               controller.current.setVolume(val / 100);
-          }
-          if (key === 'fontSize' && state.sections.length > 0) {
-              // Reload current chapter to re-paginate with new font size
-              controller.current.refreshLayout();
+          } else if (key === 'fontSize') {
+              controller.current.setFontSize(val);
           }
       }
   };
 
-  // ===================== Event Handlers =====================
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files[0]) {
           controller.current?.loadFile(e.target.files[0]);
       }
   };
 
-  const handleSelection = useCallback(() => {
-      const selection = window.getSelection();
-      if (selection && selection.toString().trim().length > 0 && !state.dictionaryModalVisible) {
-          const range = selection.getRangeAt(0);
-          const rect = range.getBoundingClientRect();
-          setState(prev => ({
-              ...prev,
-              selectionToolbarVisible: true,
-              selectionRect: rect,
-              selectedText: selection.toString().trim()
-          }));
-      } else {
-          // Only hide if not clicking the toolbar
-      }
-  }, [state.dictionaryModalVisible]);
-
-  // Click away to hide toolbar
+  // Close Selection Toolbar on click away
   useEffect(() => {
       const listener = (e: MouseEvent) => {
+          // Note: clicks inside iframe don't propagate here usually, this handles outside clicks
           const target = e.target as HTMLElement;
-          if (!target.closest('#selection-toolbar') && !window.getSelection()?.toString()) {
+          if (!target.closest('#selection-toolbar')) {
               setState(prev => ({ ...prev, selectionToolbarVisible: false }));
           }
       };
       document.addEventListener('mouseup', listener);
-      document.addEventListener('keyup', handleSelection);
-      document.addEventListener('mouseup', handleSelection);
-      return () => {
-          document.removeEventListener('mouseup', listener);
-          document.removeEventListener('keyup', handleSelection);
-          document.removeEventListener('mouseup', handleSelection);
-      };
-  }, [handleSelection]);
+      return () => document.removeEventListener('mouseup', listener);
+  }, []);
 
-
-  // ===================== Render Helpers =====================
   const renderTOC = (items: NavigationItem[], level = 0) => {
       return items.map((item, idx) => (
           <div key={idx}>
               <div 
-                className={`p-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 truncate ${state.chapters.find(c => c.href === item.href)?.id === state.chapters[state.currentChapterIndex]?.id ? 'text-blue-500 font-bold' : ''}`}
+                className={`p-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 truncate`}
                 style={{ paddingLeft: `${level * 1.5 + 0.5}rem` }}
                 onClick={() => {
-                    // Find index
-                    const chIdx = state.chapters.findIndex(c => c.href === item.href || c.href.endsWith(item.href));
-                    if (chIdx !== -1) {
-                        controller.current?.loadChapter(chIdx);
-                        setState(s => ({ ...s, isSidebarOpen: false }));
-                    }
+                    controller.current?.display(item.href);
+                    setState(s => ({ ...s, isSidebarOpen: false }));
                 }}
               >
                   {item.label}
@@ -189,7 +134,7 @@ export default function App() {
     <div className={`h-screen flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-800'}`}>
       
       {/* Top Nav */}
-      <div className="flex justify-between items-center p-3 bg-gray-800 text-white shadow-md z-30">
+      <div className="flex justify-between items-center p-3 bg-gray-800 text-white shadow-md z-30 h-14 shrink-0">
         <div className="flex gap-4">
             <button onClick={() => setState(s => ({ ...s, isSidebarOpen: !s.isSidebarOpen }))}><Icon name="bars"/></button>
             <button onClick={() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }))}><Icon name="cog"/></button>
@@ -200,9 +145,7 @@ export default function App() {
         </button>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 relative overflow-hidden flex">
-          
           {/* Sidebar */}
           <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold">
@@ -210,19 +153,12 @@ export default function App() {
                    <button onClick={() => setState(s => ({ ...s, isSidebarOpen: false }))}><Icon name="times"/></button>
                </div>
                <div className="overflow-y-auto h-full pb-20">
-                   {state.navigationMap.length > 0 ? renderTOC(state.navigationMap) : (
-                       state.chapters.map((c, i) => (
-                           <div key={i} className="p-3 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer" onClick={() => { controller.current?.loadChapter(i); setState(s => ({ ...s, isSidebarOpen: false })); }}>
-                               {c.title}
-                           </div>
-                       ))
-                   )}
+                   {state.navigationMap.length > 0 ? renderTOC(state.navigationMap) : <div className="p-4 text-gray-500">No Table of Contents</div>}
                </div>
           </div>
 
           {/* Reader Area */}
-          <div className="flex-1 relative flex flex-col">
-               {/* Upload */}
+          <div className="flex-1 relative flex flex-col overflow-hidden">
                {!state.currentBook && !state.isLoading && (
                    <div className="flex-1 flex flex-col items-center justify-center p-10 border-2 border-dashed border-gray-300 m-10 rounded-lg">
                        <Icon name="book-open"/>
@@ -235,7 +171,6 @@ export default function App() {
                    </div>
                )}
 
-               {/* Loading */}
                {state.isLoading && (
                    <div className="flex-1 flex flex-col items-center justify-center">
                        <div className="loader border-4 border-gray-200 border-t-blue-500 rounded-full w-12 h-12 animate-spin-custom mb-4"></div>
@@ -243,23 +178,22 @@ export default function App() {
                    </div>
                )}
 
-               {/* Content */}
-               {state.currentBook && !state.isLoading && (
-                   <div className="flex-1 relative overflow-hidden bg-white dark:bg-gray-800" ref={readerContentRef}>
-                       {/* Edge Taps */}
-                       <div className="absolute top-0 bottom-0 left-0 w-12 z-10" onClick={() => controller.current?.prevPage()}></div>
-                       <div className="absolute top-0 bottom-0 right-0 w-12 z-10" onClick={() => controller.current?.nextPage()}></div>
-                       
-                       {/* Pages */}
-                       {state.sections.map((html, idx) => (
-                           <div 
-                             key={idx}
-                             className={`absolute inset-0 p-8 md:p-12 overflow-y-auto no-scrollbar transition-opacity duration-300 ${idx === state.currentSectionIndex ? 'opacity-100 z-0' : 'opacity-0 -z-10 pointer-events-none'}`}
-                             style={{ fontSize: controller.current?.getFontSizeValue(tempSettings.fontSize) }}
-                             dangerouslySetInnerHTML={{ __html: html }} 
-                           />
-                       ))}
-                   </div>
+               {/* EPub.js Container */}
+               <div 
+                 id="viewer" 
+                 ref={viewerRef} 
+                 className={`flex-1 relative bg-white dark:bg-gray-800 ${!state.currentBook ? 'hidden' : ''}`}
+               />
+               
+               {state.currentBook && (
+                   <>
+                       <div className="absolute top-0 bottom-0 left-0 w-16 z-20 cursor-pointer flex items-center justify-start pl-2 hover:bg-black hover:bg-opacity-5 transition-colors" onClick={() => controller.current?.prevPage()}>
+                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 hover:opacity-50"><Icon name="chevron-left"/></div>
+                       </div>
+                       <div className="absolute top-0 bottom-0 right-0 w-16 z-20 cursor-pointer flex items-center justify-end pr-2 hover:bg-black hover:bg-opacity-5 transition-colors" onClick={() => controller.current?.nextPage()}>
+                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 hover:opacity-50"><Icon name="chevron-right"/></div>
+                       </div>
+                   </>
                )}
           </div>
 
@@ -270,7 +204,6 @@ export default function App() {
                    <button onClick={() => setState(s => ({ ...s, isSettingsOpen: false }))}><Icon name="times"/></button>
                </div>
                <div className="p-4 overflow-y-auto h-full pb-20 space-y-6">
-                   {/* Appearance */}
                    <section>
                        <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">Appearance</h4>
                        <div className="space-y-3">
@@ -283,10 +216,16 @@ export default function App() {
                                    <option value="xlarge">Extra Large</option>
                                </select>
                            </div>
+                           <div>
+                               <label className="block text-sm mb-1">Theme</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value)}>
+                                   <option value="light">Light</option>
+                                   <option value="dark">Dark</option>
+                                   <option value="sepia">Sepia</option>
+                               </select>
+                           </div>
                        </div>
                    </section>
-
-                   {/* Audio */}
                    <section>
                        <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">Audio</h4>
                        <div className="space-y-3">
@@ -304,8 +243,6 @@ export default function App() {
                            </div>
                        </div>
                    </section>
-
-                   {/* Anki */}
                    <section>
                        <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">Anki Connect</h4>
                        <div className="space-y-3 text-sm">
@@ -343,7 +280,6 @@ export default function App() {
                                        <option value="">Select Model</option>
                                        {state.ankiModels.map(m => <option key={m} value={m}>{m}</option>)}
                                    </select>
-                                   {/* Field mapping */}
                                    {['Word', 'Meaning', 'Sentence'].map(f => (
                                        <select key={f} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" 
                                          value={(tempAnki as any)[`${f.toLowerCase()}Field`]} 
@@ -365,9 +301,7 @@ export default function App() {
           </div>
       </div>
 
-      {/* Bottom Controls */}
-      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)]">
-           {/* Audio Player */}
+      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0">
            <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 flex items-center justify-center" onClick={() => controller.current?.stopAudio()}><Icon name="stop"/></button>
                <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 flex items-center justify-center" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
@@ -393,15 +327,13 @@ export default function App() {
                </div>
            </div>
 
-           {/* Page Navigation */}
            <div className="flex items-center gap-4 mt-2 md:mt-0">
                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.prevPage()}><Icon name="chevron-left"/></button>
-               <span className="font-mono text-sm">{state.currentSectionIndex + 1} / {state.sections.length || 1}</span>
+               <span className="font-mono text-sm text-gray-500">Page Navigation</span>
                <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.nextPage()}><Icon name="chevron-right"/></button>
            </div>
       </div>
 
-      {/* Selection Toolbar */}
       {state.selectionToolbarVisible && state.selectionRect && (
           <div 
             id="selection-toolbar"
@@ -416,7 +348,6 @@ export default function App() {
           </div>
       )}
 
-      {/* Dictionary Modal */}
       {state.dictionaryModalVisible && (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setState(s => ({ ...s, dictionaryModalVisible: false }))}>
               <div className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-lg shadow-2xl flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
@@ -456,8 +387,6 @@ export default function App() {
                         onClick={async () => {
                              if (!state.dictionaryData) return;
                              const def = state.dictionaryData.meanings[0]?.definitions[0]?.definition || '';
-                             // Try to find full sentence from text? Hard without maintaining selection context deeply.
-                             // For now, use selected text as sentence placeholder or context.
                              try {
                                  await controller.current?.addToAnki(state.selectedText, def, state.selectedText);
                                  alert('Added to Anki!');

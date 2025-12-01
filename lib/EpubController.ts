@@ -1,12 +1,13 @@
-import { AnkiSettings, AppSettings, Book, Chapter, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from '../types';
+import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState } from '../types';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
 
 export class EpubController {
     // Internal State
     private book: any = null;
+    private rendition: any = null;
     private state: ReaderState;
-    private updateState: StateUpdater;
+    private updateReactState: StateUpdater;
     
     // Settings
     public settings: AppSettings;
@@ -19,49 +20,201 @@ export class EpubController {
     private currentAudioFile: string | null = null;
     private currentAudioIndex: number = -1;
     
-    // Constants
-    private HIGHLIGHT_CLASS = 'audio-highlight';
-
-    // Refs (DOM elements needed for calculation)
+    // Refs
     private containerRef: HTMLElement | null = null;
 
     constructor(initialState: ReaderState, updateState: StateUpdater) {
         this.state = initialState;
-        this.updateState = updateState;
+        this.updateReactState = updateState;
         
-        // Load Settings
         const savedSettings = localStorage.getItem('epubReaderSettings');
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
         
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
 
-        // Initialize Audio
         this.audioPlayer = new Audio();
         this.bindAudioEvents();
-        
-        // Apply initial settings
         this.setVolume(this.settings.audioVolume / 100);
         
-        // Initial state sync
-        this.updateState({
+        this.setState({
             isDarkMode: this.settings.darkMode,
-            ankiConnected: false // Will test connection later
+            ankiConnected: false
         });
     }
 
-    public setContainerRef(ref: HTMLElement | null) {
-        this.containerRef = ref;
+    private setState(partial: Partial<ReaderState>) {
+        this.state = { ...this.state, ...partial };
+        this.updateReactState(partial);
     }
 
-    public refreshLayout() {
-        if (this.state.chapters.length > 0) {
-            // Force re-calculation of pages
-            const chapter = this.state.chapters[this.state.currentChapterIndex];
-            if (chapter) {
-                this.splitChapterIntoPages(chapter.content);
-            }
+    // ==========================================
+    // Core Rendering (Native Epub.js)
+    // ==========================================
+    public mount(element: HTMLElement) {
+        this.containerRef = element;
+        // If book is already loaded but not rendered (e.g. strict mode re-mount), render it
+        if (this.book && !this.rendition) {
+            this.renderBook();
         }
+    }
+
+    public async loadFile(file: File) {
+        try {
+            this.setState({ isLoading: true, loadingMessage: 'Opening EPUB...' });
+            
+            if (this.book) {
+                this.book.destroy();
+                this.book = null;
+            }
+            this.rendition = null;
+
+            // Initialize Book
+            this.book = ePub(file);
+            await this.book.ready;
+
+            // Load Metadata
+            const metadata = await this.book.loaded.metadata;
+            const navigation = await this.book.loaded.navigation;
+            
+            this.setState({
+                currentBook: { title: metadata.title, author: metadata.creator },
+                navigationMap: navigation.toc || [],
+                loadingMessage: 'Rendering...'
+            });
+
+            // Parse Audio Data
+            this.setState({ loadingMessage: 'Parsing Audio Data...' });
+            try {
+                await this.loadAudioFromEPUB();
+            } catch (e) {
+                console.warn('Audio parse warning:', e);
+            }
+
+            // Render
+            if (this.containerRef) {
+                this.renderBook();
+            }
+
+            this.setState({ isLoading: false });
+
+        } catch (e: any) {
+            console.error(e);
+            this.setState({ isLoading: false });
+            alert('Error loading book: ' + e.message);
+        }
+    }
+
+    private renderBook() {
+        if (!this.book || !this.containerRef) return;
+
+        // Create Rendition
+        this.rendition = this.book.renderTo(this.containerRef, {
+            width: '100%',
+            height: '100%',
+            flow: 'paginated', // or 'scrolled'
+            manager: 'default',
+            allowScriptedContent: true
+        });
+
+        // Register Themes
+        this.rendition.themes.register('light', { body: { color: '#333', background: '#fff' } });
+        this.rendition.themes.register('dark', { body: { color: '#ddd', background: '#111' } });
+        this.rendition.themes.register('sepia', { body: { color: '#5f4b32', background: '#f6f1d1' } });
+        this.rendition.themes.register('audio-highlight', { 
+            '.audio-highlight': { 'background-color': 'rgba(255, 255, 0, 0.4)', 'border-radius': '2px' } 
+        });
+
+        // Events
+        this.rendition.on('relocated', (location: any) => {
+            this.setState({ currentCfi: location.start.cfi });
+            // Try to map CFI to a chapter label if possible
+            // Simplified: Use percentage or just let UI handle navigation
+        });
+
+        this.rendition.on('selected', (cfiRange: string, contents: any) => {
+            const range = contents.range(cfiRange);
+            const text = range.toString();
+            
+            // Get screen coordinates for toolbar
+            const rect = range.getBoundingClientRect();
+            // Note: coordinates are inside iframe, need to offset if we render toolbar outside
+            // However, React state update usually happens in main window context.
+            // We might need to map iframe coordinates to window coordinates.
+            const iframe = this.containerRef?.querySelector('iframe');
+            const iframeRect = iframe?.getBoundingClientRect();
+            
+            if (iframeRect && rect) {
+                const absoluteRect = {
+                    left: rect.left + iframeRect.left,
+                    top: rect.top + iframeRect.top,
+                    width: rect.width,
+                    height: rect.height
+                } as DOMRect; // Fake it enough for UI
+
+                this.setState({
+                    selectionToolbarVisible: true,
+                    selectionRect: absoluteRect,
+                    selectedText: text
+                });
+            }
+            
+            // Allow default copy behavior?
+            // contents.window.getSelection().addRange(range);
+        });
+
+        // Initial Display
+        this.rendition.display();
+        this.applySettings();
+    }
+
+    public applySettings() {
+        if (!this.rendition) return;
+        
+        this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
+        this.rendition.themes.select(this.settings.theme);
+        
+        // Also apply dark mode to main app container if needed, already handled in App via state
+    }
+
+    public setFontSize(size: string) {
+        this.settings.fontSize = size as any;
+        this.saveSettings();
+        if (this.rendition) {
+            this.rendition.themes.fontSize(this.getFontSizeValue(size));
+        }
+    }
+
+    public setTheme(theme: string) {
+        this.settings.theme = theme as any;
+        this.saveSettings();
+        if (this.rendition) {
+            this.rendition.themes.select(theme);
+        }
+    }
+
+    private getFontSizeValue(size: string) {
+        switch(size) {
+            case 'small': return '80%';
+            case 'large': return '120%';
+            case 'xlarge': return '150%';
+            default: return '100%';
+        }
+    }
+
+    // ==========================================
+    // Navigation
+    // ==========================================
+    public prevPage() {
+        this.rendition?.prev();
+    }
+
+    public nextPage() {
+        this.rendition?.next();
+    }
+
+    public display(target: string) {
+        this.rendition?.display(target);
     }
 
     // ==========================================
@@ -69,34 +222,34 @@ export class EpubController {
     // ==========================================
     private bindAudioEvents() {
         this.audioPlayer.addEventListener('loadedmetadata', () => {
-            this.updateState({ audioDuration: this.audioPlayer.duration });
+            this.setState({ audioDuration: this.audioPlayer.duration });
         });
         
         this.audioPlayer.addEventListener('timeupdate', () => {
-            this.updateState({ audioCurrentTime: this.audioPlayer.currentTime });
+            this.setState({ audioCurrentTime: this.audioPlayer.currentTime });
             if (this.settings.syncTextHighlight) {
                 this.updateAudioHighlight();
             }
         });
         
         this.audioPlayer.addEventListener('ended', () => {
-            this.updateState({ isAudioPlaying: false });
+            this.setState({ isAudioPlaying: false });
         });
         
         this.audioPlayer.addEventListener('error', (e) => {
             console.error('Audio error', e);
-            this.updateState({ isAudioPlaying: false });
+            this.setState({ isAudioPlaying: false });
         });
     }
 
     public toggleAudio() {
         if (this.state.isAudioPlaying) {
             this.audioPlayer.pause();
-            this.updateState({ isAudioPlaying: false });
+            this.setState({ isAudioPlaying: false });
         } else {
             if (this.audioPlayer.src && this.audioPlayer.src !== window.location.href) {
                 this.audioPlayer.play().catch(e => console.error("Play failed", e));
-                this.updateState({ isAudioPlaying: true });
+                this.setState({ isAudioPlaying: true });
             } else if (this.currentAudioFile) {
                 this.playAudioFile(this.currentAudioFile);
             } else if (this.audioGroups.size > 0) {
@@ -109,14 +262,12 @@ export class EpubController {
     public stopAudio() {
         this.audioPlayer.pause();
         this.audioPlayer.currentTime = 0;
-        this.updateState({ isAudioPlaying: false, audioCurrentTime: 0 });
+        this.setState({ isAudioPlaying: false, audioCurrentTime: 0 });
         this.clearAudioHighlight();
     }
 
     public seekAudio(time: number) {
-        if (this.audioPlayer.src) {
-            this.audioPlayer.currentTime = time;
-        }
+        if (this.audioPlayer.src) this.audioPlayer.currentTime = time;
     }
 
     public seekAudioBy(seconds: number) {
@@ -129,335 +280,6 @@ export class EpubController {
         this.audioPlayer.volume = Math.max(0, Math.min(1, val));
         this.settings.audioVolume = val * 100;
         this.saveSettings();
-    }
-
-    // ==========================================
-    // Book Loading & Parsing
-    // ==========================================
-    public async loadFile(file: File) {
-        try {
-            this.updateState({ isLoading: true, loadingMessage: 'Parsing EPUB file...' });
-            
-            if (typeof ePub === 'undefined') {
-                throw new Error('ePub library not loaded');
-            }
-
-            this.book = ePub(file);
-            await this.book.ready;
-            
-            const metadata = await this.book.loaded.metadata;
-            const navigation = await this.book.loaded.navigation;
-            
-            // Process content
-            const chapters: Chapter[] = [];
-            const toc = navigation.toc || [];
-            
-            const spine = this.book.spine;
-            this.updateState({ loadingMessage: `Loading ${spine.length} chapters...` });
-
-            for (let i = 0; i < spine.length; i++) {
-                const item = spine.get(i);
-                if (item && item.linear !== false) {
-                    try {
-                        const section = await this.book.load(item.href);
-                        let content = '';
-                        if (section.render) {
-                            content = await section.render();
-                        } else if (section.document) {
-                            content = section.document.body.innerHTML;
-                        } else if (typeof section === 'string') {
-                             const parser = new DOMParser();
-                             const doc = parser.parseFromString(section, 'application/xhtml+xml');
-                             content = doc.body.innerHTML;
-                        }
-                        
-                        if (!content || typeof content !== 'string') {
-                             content = await this.book.archive.getText(item.href);
-                             const parser = new DOMParser();
-                             const doc = parser.parseFromString(content, 'application/xhtml+xml');
-                             content = doc.body ? doc.body.innerHTML : content;
-                        }
-
-                        content = await this.processContentImages(content, item.href);
-                        
-                        let title = `Chapter ${i + 1}`;
-                        const navItem = this.findNavItemByHref(toc, item.href);
-                        if (navItem) title = navItem.label;
-
-                        chapters.push({
-                            id: item.id,
-                            title,
-                            content,
-                            href: item.href
-                        });
-                    } catch (e) {
-                        console.warn('Failed to load chapter', i, e);
-                    }
-                }
-            }
-
-            if (chapters.length === 0) throw new Error("No readable content found");
-
-            this.updateState({ loadingMessage: 'Loading Audio Data...' });
-            
-            // Don't let audio failure block book loading
-            try {
-                await this.loadAudioFromEPUB();
-            } catch (err) {
-                console.error('Audio loading failed', err);
-            }
-
-            this.updateState({
-                currentBook: { title: metadata.title, author: metadata.creator },
-                chapters,
-                navigationMap: toc,
-                isLoading: false,
-                currentChapterIndex: 0
-            });
-
-            this.loadChapter(0);
-
-        } catch (e: any) {
-            console.error(e);
-            this.updateState({ isLoading: false, loadingMessage: '' });
-            alert('Error loading book: ' + e.message);
-        }
-    }
-
-    private findNavItemByHref(items: NavigationItem[], href: string): NavigationItem | null {
-        for (const item of items) {
-            if (item.href === href || item.href.endsWith(href) || href.endsWith(item.href)) return item;
-            if (item.subitems) {
-                const found = this.findNavItemByHref(item.subitems, href);
-                if (found) return found;
-            }
-        }
-        return null;
-    }
-
-    private async processContentImages(content: string, baseHref: string): Promise<string> {
-        if (!content) return content;
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(content, 'text/html');
-        
-        const images = doc.querySelectorAll('img');
-        for (let i = 0; i < images.length; i++) {
-            const img = images[i];
-            const src = img.getAttribute('src');
-            if (src && !src.startsWith('data:') && !src.startsWith('http')) {
-                try {
-                    const url = this.book.path.resolve(src, baseHref);
-                    const blob = await this.book.load(url);
-                    if (blob) {
-                        img.src = URL.createObjectURL(blob);
-                    }
-                } catch (e) {
-                    console.warn('Failed to load image', src);
-                }
-            }
-        }
-        return doc.body.innerHTML;
-    }
-
-    // ==========================================
-    // Pagination & Navigation Logic
-    // ==========================================
-    public loadChapter(index: number) {
-        if (index < 0 || index >= this.state.chapters.length) return;
-        
-        this.updateState({ currentChapterIndex: index });
-        const chapter = this.state.chapters[index];
-        this.splitChapterIntoPages(chapter.content);
-    }
-
-    public prevPage() {
-        const { currentSectionIndex, currentChapterIndex } = this.state;
-        if (currentSectionIndex > 0) {
-            this.updateState({ currentSectionIndex: currentSectionIndex - 1 });
-        } else if (currentChapterIndex > 0) {
-            this.loadChapter(currentChapterIndex - 1);
-        }
-    }
-
-    public nextPage() {
-        const { currentSectionIndex, currentChapterIndex, sections, chapters } = this.state;
-        if (currentSectionIndex < sections.length - 1) {
-            this.updateState({ currentSectionIndex: currentSectionIndex + 1 });
-        } else if (currentChapterIndex < chapters.length - 1) {
-            this.loadChapter(currentChapterIndex + 1);
-        }
-    }
-
-    private splitChapterIntoPages(content: string) {
-        const winW = typeof window !== 'undefined' ? window.innerWidth : 600;
-        const winH = typeof window !== 'undefined' ? window.innerHeight : 800;
-        
-        const containerW = this.containerRef?.clientWidth || 0;
-        const containerH = this.containerRef?.clientHeight || 0;
-        
-        let width = containerW > 100 ? containerW - 80 : Math.min(600, winW - 40);
-        let height = containerH > 100 ? containerH - 80 : winH - 140;
-        
-        if (width < 300) width = 300;
-        if (height < 400) height = 500;
-
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = content;
-        tempDiv.style.position = 'absolute';
-        tempDiv.style.left = '-9999px';
-        tempDiv.style.width = `${width}px`;
-        tempDiv.style.fontSize = this.getFontSizeValue(this.settings.fontSize);
-        tempDiv.style.lineHeight = '1.8';
-        tempDiv.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif'; 
-        document.body.appendChild(tempDiv);
-
-        const sections: string[] = [];
-        const elements = this.getPageElements(tempDiv);
-
-        if (elements.length === 0) {
-            sections.push(content);
-        } else {
-            let currentPageElements: Element[] = [];
-            let currentHeight = 0;
-
-            for (let element of elements) {
-                 const elInfo = this.getElementInfo(element, width);
-                 
-                 if (elInfo.totalHeight > height) {
-                     if (currentPageElements.length > 0) {
-                         sections.push(currentPageElements.map(e => e.outerHTML).join(''));
-                         currentPageElements = [];
-                         currentHeight = 0;
-                     }
-                     const splitEls = this.splitLargeElement(element, height, width);
-                     currentPageElements.push(...splitEls);
-                     currentHeight = this.calculateElementsHeight(currentPageElements, width);
-                 } else {
-                     if (currentHeight + elInfo.totalHeight > height) {
-                         sections.push(currentPageElements.map(e => e.outerHTML).join(''));
-                         currentPageElements = [];
-                         currentHeight = 0;
-                     }
-                     currentPageElements.push(element);
-                     currentHeight += elInfo.totalHeight;
-                 }
-            }
-            if (currentPageElements.length > 0) {
-                sections.push(currentPageElements.map(e => e.outerHTML).join(''));
-            }
-        }
-        
-        document.body.removeChild(tempDiv);
-        
-        // Final fallback: if pagination logic produced nothing, verify original content
-        if (sections.length === 0 && content.length > 0) {
-            sections.push(content);
-        }
-
-        this.updateState({ sections, currentSectionIndex: 0 });
-    }
-
-    private getPageElements(container: Element): Element[] {
-        const elements: Element[] = [];
-        const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT, {
-            acceptNode: (node) => {
-                const tags = ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE', 'UL', 'OL', 'LI', 'TABLE', 'FIGURE', 'IMG', 'SECTION', 'ARTICLE', 'MAIN', 'ASIDE', 'SPAN', 'HR'];
-                if (tags.includes(node.nodeName)) {
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-                return NodeFilter.FILTER_SKIP;
-            }
-        });
-        let node;
-        while (node = walker.nextNode() as Element) {
-            elements.push(node.cloneNode(true) as Element);
-        }
-        return elements;
-    }
-
-    private getElementInfo(element: Element, width: number) {
-        const temp = document.createElement('div');
-        temp.appendChild(element.cloneNode(true));
-        temp.style.position = 'absolute';
-        temp.style.visibility = 'hidden';
-        temp.style.width = `${width}px`;
-        temp.style.fontSize = this.getFontSizeValue(this.settings.fontSize);
-        temp.style.lineHeight = '1.8';
-        
-        document.body.appendChild(temp);
-        const height = temp.offsetHeight;
-        const style = window.getComputedStyle(element);
-        const marginTop = parseFloat(style.marginTop) || 0;
-        const marginBottom = parseFloat(style.marginBottom) || 0;
-        document.body.removeChild(temp);
-        
-        return { height, totalHeight: height + marginTop + marginBottom };
-    }
-
-    private calculateElementsHeight(elements: Element[], width: number) {
-        if (elements.length === 0) return 0;
-        const temp = document.createElement('div');
-        temp.style.position = 'absolute';
-        temp.style.visibility = 'hidden';
-        temp.style.width = `${width}px`;
-        elements.forEach(e => temp.appendChild(e.cloneNode(true)));
-        document.body.appendChild(temp);
-        const h = temp.offsetHeight;
-        document.body.removeChild(temp);
-        return h;
-    }
-
-    private splitLargeElement(element: Element, maxHeight: number, width: number): Element[] {
-         if (['P', 'DIV', 'SPAN', 'H1', 'H2', 'H3', 'H4', 'SECTION', 'ARTICLE'].includes(element.tagName)) {
-             return this.splitTextElement(element, maxHeight, width);
-         }
-         return [element];
-    }
-
-    private splitTextElement(element: Element, maxHeight: number, width: number): Element[] {
-        const text = element.textContent || '';
-        const sentences = text.split(/([.!?])\s+/);
-        const parts: Element[] = [];
-        let currentChunk: string[] = [];
-        
-        const createEl = (str: string) => {
-             const el = element.cloneNode() as HTMLElement;
-             el.textContent = str;
-             return el;
-        };
-
-        const checkHeight = (str: string) => {
-             const t = createEl(str);
-             const info = this.getElementInfo(t, width);
-             return info.totalHeight;
-        }
-
-        for (let i = 0; i < sentences.length; i+=2) {
-            const sentence = sentences[i] + (sentences[i+1] || '');
-            const testChunk = [...currentChunk, sentence];
-            const testStr = testChunk.join(' ');
-            
-            if (checkHeight(testStr) > maxHeight && currentChunk.length > 0) {
-                 parts.push(createEl(currentChunk.join(' ')));
-                 currentChunk = [sentence];
-            } else {
-                 currentChunk.push(sentence);
-            }
-        }
-        
-        if (currentChunk.length > 0) {
-            parts.push(createEl(currentChunk.join(' ')));
-        }
-        return parts;
-    }
-
-    public getFontSizeValue(size: string) {
-        switch(size) {
-            case 'small': return '0.9rem';
-            case 'large': return '1.3rem';
-            case 'xlarge': return '1.5rem';
-            default: return '1.1rem';
-        }
     }
 
     // ==========================================
@@ -474,9 +296,7 @@ export class EpubController {
         this.mediaOverlayData = [];
         for (const item of smilItems) {
             const res = await this.processSmil(item);
-            if (res.length) {
-                this.mediaOverlayData.push(...res);
-            }
+            if (res.length) this.mediaOverlayData.push(...res);
         }
         
         this.audioGroups.clear();
@@ -497,26 +317,17 @@ export class EpubController {
             let text = '';
             try {
                 const doc = await this.book.load(item.href);
-                if (doc instanceof Blob) {
-                    text = await doc.text();
-                } else if (typeof doc === 'string') {
-                    text = doc;
-                } else if (doc && doc.documentElement) {
-                    const serializer = new XMLSerializer();
-                    text = serializer.serializeToString(doc);
-                }
+                if (doc instanceof Blob) text = await doc.text();
+                else if (typeof doc === 'string') text = doc;
+                else if (doc && doc.documentElement) text = new XMLSerializer().serializeToString(doc);
             } catch(e) {
                 text = await this.book.archive.getText(item.href);
             }
 
             if (!text) return [];
-
             const parser = new DOMParser();
             const xml = parser.parseFromString(text, 'application/xml');
-            
-            if (xml.querySelector('parsererror')) {
-                return [];
-            }
+            if (xml.querySelector('parsererror')) return [];
 
             const pars = xml.getElementsByTagName('par');
             const fragments: any[] = [];
@@ -530,153 +341,94 @@ export class EpubController {
                     const audioSrc = this.resolvePath(a.getAttribute('src'), item.href);
                     const clipBegin = a.getAttribute('clipBegin') || a.getAttribute('clip-begin');
                     const clipEnd = a.getAttribute('clipEnd') || a.getAttribute('clip-end');
-                    
-                    if (textSrc && audioSrc) {
-                        fragments.push({ textSrc, audioSrc, clipBegin, clipEnd });
-                    }
+                    if (textSrc && audioSrc) fragments.push({ textSrc, audioSrc, clipBegin, clipEnd });
                 }
             }
             return fragments;
-        } catch (e) {
-            console.error('Failed to parse SMIL', item.href, e);
-            return [];
-        }
+        } catch (e) { return []; }
     }
 
     private resolvePath(rel: string | null, base: string) {
         if (!rel) return '';
         if (rel.startsWith('/')) return rel;
-        
         const baseDir = base.substring(0, base.lastIndexOf('/') + 1);
         const stack = baseDir.split('/').filter(x => x && x !== '.');
         const parts = rel.split('/').filter(x => x && x !== '.');
-        
         for (const p of parts) {
-            if (p === '..') {
-                if (stack.length > 0) stack.pop();
-            } else {
-                stack.push(p);
-            }
+            if (p === '..') { if (stack.length > 0) stack.pop(); }
+            else stack.push(p);
         }
         return stack.join('/');
     }
 
     private async findAudioBlob(path: string): Promise<string | null> {
-        console.log(`[Audio] Resolving: ${path}`);
-        
-        // Strategy 0: Direct ePub.js resolution (often fails for relative paths without package context)
+        // Robust audio finding strategy (kept from previous iteration)
         try {
              let blob = await this.book.archive.getBlob(path);
              if (blob) return URL.createObjectURL(blob);
         } catch(e) {}
 
-        // Strategy 1: Package Path Resolution (Requested Fix)
-        // If the path is relative, we must resolve it relative to the OPF package file
         if (this.book.container && this.book.container.packagePath) {
-             const pkgPath = this.book.container.packagePath; // e.g. "OEBPS/content.opf"
-             const pkgDir = pkgPath.substring(0, pkgPath.lastIndexOf('/')); // "OEBPS"
-             
+             const pkgPath = this.book.container.packagePath;
+             const pkgDir = pkgPath.substring(0, pkgPath.lastIndexOf('/'));
              if (pkgDir) {
-                 const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-                 // Ensure path looks like /OEBPS/Audio/file.mp3
-                 // archive.getBlob expects absolute path with leading slash if inside a folder
-                 
-                 // Try exact path appended to package dir
-                 const absPath = `/${pkgDir}/${cleanPath}`;
-                 
-                 console.log(`[Audio] Strategy 1 (Package Path): Trying ${absPath}`);
+                 const absPath = `/${pkgDir}/${path.startsWith('/') ? path.slice(1) : path}`;
                  try {
                      const blob = await this.book.archive.getBlob(absPath);
-                     if (blob) {
-                         console.log(`[Audio] Found via Package Path`);
-                         return URL.createObjectURL(blob);
-                     }
-                 } catch(e) {
-                     console.warn(`[Audio] Strategy 1 failed for ${absPath}`);
-                 }
+                     if (blob) return URL.createObjectURL(blob);
+                 } catch(e) {}
              }
         }
 
-        // Strategy 2: Standard Absolute Path
-        // Sometimes the path is already correct for the root
         try {
             const p = path.startsWith('/') ? path : '/' + path;
             const blob = await this.book.archive.getBlob(p);
-            if (blob) {
-                console.log(`[Audio] Found via Standard Path: ${p}`);
-                return URL.createObjectURL(blob);
-            }
+            if (blob) return URL.createObjectURL(blob);
         } catch(e) {}
 
-        // Strategy 3: Direct Zip Access (Fuzzy Search)
-        // This iterates the actual files in the zip to find a match by filename suffix.
         if (this.book.archive && this.book.archive.zip && this.book.archive.zip.files) {
-             const targetName = path.split('/').pop()?.toLowerCase(); // "chapter_001.mp3"
-             if (!targetName) return null;
-
-             const entries = Object.keys(this.book.archive.zip.files);
-             // Find entry ending with /targetName or equaling targetName
-             // Use explicit loop for clarity or .find
-             const match = entries.find(e => e.toLowerCase().endsWith('/' + targetName) || e.toLowerCase() === targetName);
-             
-             if (match) {
-                 console.log(`[Audio] Found via Fuzzy Zip: ${match}`);
-                 // Access the file object directly using the key from entries
-                 // Avoid zip.file(path) normalization issues by using array access
-                 const fileObj = this.book.archive.zip.files[match];
-                 if (fileObj) {
-                     try {
-                         // Use async('blob') directly from the ZipObject
-                         const blob = await fileObj.async('blob');
-                         
-                         // Fix MIME type because zip extraction often defaults to octet-stream
-                         const ext = targetName.split('.').pop();
-                         let mime = 'application/octet-stream';
-                         if (ext === 'mp3') mime = 'audio/mpeg';
-                         if (ext === 'm4a' || ext === 'mp4') mime = 'audio/mp4';
-                         if (ext === 'ogg') mime = 'audio/ogg';
-                         if (ext === 'wav') mime = 'audio/wav';
-                         
-                         const newBlob = new Blob([blob], { type: mime });
-                         const url = URL.createObjectURL(newBlob);
-                         console.log(`[Audio] Blob created successfully: ${url}`);
-                         return url;
-                     } catch(e) {
-                         console.error('[Audio] Zip read failed', e);
+             const targetName = path.split('/').pop()?.toLowerCase();
+             if (targetName) {
+                 const entries = Object.keys(this.book.archive.zip.files);
+                 const match = entries.find(e => e.toLowerCase().endsWith('/' + targetName) || e.toLowerCase() === targetName);
+                 if (match) {
+                     const fileObj = this.book.archive.zip.files[match];
+                     if (fileObj) {
+                         try {
+                             const blob = await fileObj.async('blob');
+                             const ext = targetName.split('.').pop();
+                             let mime = 'application/octet-stream';
+                             if (ext === 'mp3') mime = 'audio/mpeg';
+                             if (ext === 'm4a' || ext === 'mp4') mime = 'audio/mp4';
+                             if (ext === 'ogg') mime = 'audio/ogg';
+                             if (ext === 'wav') mime = 'audio/wav';
+                             return URL.createObjectURL(new Blob([blob], { type: mime }));
+                         } catch(e) {}
                      }
                  }
              }
         }
-        
-        console.error(`[Audio] Failed to find audio file: ${path}`);
         return null;
     }
 
     public async playAudioFile(audioPath: string) {
         try {
             this.currentAudioFile = audioPath;
-            
             const url = await this.findAudioBlob(audioPath);
-            
             if (url) {
                 this.audioPlayer.src = url;
                 this.audioPlayer.play().catch(e => console.error('Play failed', e));
-                this.updateState({ 
-                    isAudioPlaying: true, 
-                    audioTitle: audioPath.split('/').pop() || 'Audio'
-                });
+                this.setState({ isAudioPlaying: true, audioTitle: audioPath.split('/').pop() || 'Audio' });
             } else {
-                console.error("Could not find audio file:", audioPath);
-                this.updateState({ audioTitle: 'Audio Not Found' });
+                console.error("Audio not found:", audioPath);
+                this.setState({ audioTitle: 'Audio Not Found' });
             }
-
-        } catch (e) {
-            console.error("Play error", e);
-        }
+        } catch (e) { console.error("Play error", e); }
     }
 
     private updateAudioHighlight() {
-        if (!this.state.isAudioPlaying || !this.currentAudioFile) return;
+        if (!this.state.isAudioPlaying || !this.currentAudioFile || !this.rendition) return;
+        
         const frags = this.audioGroups.get(this.currentAudioFile);
         if (!frags) return;
         
@@ -689,43 +441,51 @@ export class EpubController {
 
         if (current && current.originalIndex !== this.currentAudioIndex) {
             this.currentAudioIndex = current.originalIndex;
-            
             const parts = current.textSrc.split('#');
             const id = parts.length > 1 ? parts[1] : null;
             
             if (id) {
-                this.highlightElement(id);
-                // Check if element is in current view
-                const el = document.getElementById(id);
-                if (!el) {
-                    // Try to find which page contains this ID
-                    // This is an expensive operation, so we do it only when needed
-                    const pageIndex = this.state.sections.findIndex(s => s.indexOf(`id="${id}"`) !== -1 || s.indexOf(`id='${id}'`) !== -1);
-                    
-                    if (pageIndex !== -1 && pageIndex !== this.state.currentSectionIndex) {
-                        this.updateState({ currentSectionIndex: pageIndex });
-                        // Re-apply highlight after DOM updates
-                        setTimeout(() => {
-                            this.highlightElement(id);
-                            const newEl = document.getElementById(id);
-                            if (newEl) newEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, 200);
+                // Remove previous highlight
+                this.clearAudioHighlight();
+                
+                // Navigate to the element if needed
+                // display() is smart: if already there, it does nothing or minor adjustment
+                // If we want smooth scrolling in scrolled mode, different logic needed.
+                // For paginated, display(target) turns the page.
+                this.rendition.display(current.textSrc);
+
+                // Apply Highlight
+                // Since display() is async, we might miss the DOM element if we check immediately.
+                // However, we can inject CSS classes into the view.
+                const apply = () => {
+                    const contents = this.rendition.getContents();
+                    for(const c of contents) {
+                        const el = c.document.getElementById(id);
+                        if (el) {
+                            el.classList.add('audio-highlight');
+                            // Add custom style directly if theme not working
+                            el.style.backgroundColor = 'rgba(255, 255, 0, 0.3)';
+                        }
                     }
-                } else {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
+                };
+                
+                // Try immediately and after a delay
+                apply();
+                setTimeout(apply, 200);
             }
         }
     }
-
-    private highlightElement(id: string) {
-        document.querySelectorAll('.' + this.HIGHLIGHT_CLASS).forEach(e => e.classList.remove(this.HIGHLIGHT_CLASS));
-        const el = document.getElementById(id);
-        if (el) el.classList.add(this.HIGHLIGHT_CLASS);
-    }
     
     private clearAudioHighlight() {
-         document.querySelectorAll('.' + this.HIGHLIGHT_CLASS).forEach(e => e.classList.remove(this.HIGHLIGHT_CLASS));
+         if(!this.rendition) return;
+         const contents = this.rendition.getContents();
+         for(const c of contents) {
+             const els = c.document.querySelectorAll('.audio-highlight');
+             els.forEach((el: HTMLElement) => {
+                 el.classList.remove('audio-highlight');
+                 el.style.backgroundColor = '';
+             });
+         }
     }
 
     private parseTime(t: string): number {
@@ -744,7 +504,7 @@ export class EpubController {
     // ==========================================
     public async lookupWord(word: string) {
         if (!word) return;
-        this.updateState({ 
+        this.setState({ 
             dictionaryModalVisible: true, 
             dictionaryLoading: true, 
             dictionaryError: null,
@@ -755,9 +515,9 @@ export class EpubController {
             const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
             if (!res.ok) throw new Error('Word not found');
             const data = await res.json();
-            this.updateState({ dictionaryData: data[0], dictionaryLoading: false });
+            this.setState({ dictionaryData: data[0], dictionaryLoading: false });
         } catch (e: any) {
-            this.updateState({ dictionaryError: e.message, dictionaryLoading: false });
+            this.setState({ dictionaryError: e.message, dictionaryLoading: false });
         }
     }
     
@@ -765,14 +525,13 @@ export class EpubController {
          try {
              const res = await this.ankiRequest('version');
              if (res) {
-                 this.updateState({ ankiConnected: true });
                  const decks = await this.ankiRequest('deckNames');
                  const models = await this.ankiRequest('modelNames');
-                 this.updateState({ ankiDecks: decks || [], ankiModels: models || [] });
+                 this.setState({ ankiConnected: true, ankiDecks: decks || [], ankiModels: models || [] });
                  return true;
              }
          } catch(e) {
-             this.updateState({ ankiConnected: false });
+             this.setState({ ankiConnected: false });
              return false;
          }
          return false;
@@ -781,7 +540,7 @@ export class EpubController {
     public async loadAnkiFields(modelName: string) {
         if (!modelName) return;
         const fields = await this.ankiRequest('modelFieldNames', { modelName });
-        this.updateState({ ankiFields: fields || [] });
+        this.setState({ ankiFields: fields || [] });
     }
 
     private async ankiRequest(action: string, params = {}) {
@@ -809,7 +568,6 @@ export class EpubController {
             },
             tags: tagsField.split(',').map(t => t.trim())
         };
-        
         await this.ankiRequest('addNote', { note });
     }
     
