@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 // Vite 配置
 export default defineConfig(({ mode }) => {
   // 如果你的 GitHub Pages 仓库子路径
-  const repoName = 'react-epub-reader'; // 修改为你的仓库名称
+  const repoName = 'GGbook'; // 修改为你的仓库名称
 
   return {
     plugins: [react()],
