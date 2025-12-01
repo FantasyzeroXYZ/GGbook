@@ -1,21 +1,24 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
-import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress } from './types';
+import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from './types';
 import { translations, Language } from './lib/locales';
 import { db } from './lib/db';
 
 const Icon = ({ name, className }: { name: string; className?: string }) => <i className={`fas fa-${name} ${className || ''}`}></i>;
 
 type ViewMode = 'library' | 'reader';
+type SidebarTab = 'toc' | 'bookmarks';
 
 export default function App() {
   const [view, setView] = useState<ViewMode>('library');
   const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
   const [currentBookId, setCurrentBookId] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('toc');
 
   const [state, setState] = useState<ReaderState>({
     currentBook: null,
     navigationMap: [],
+    bookmarks: [],
     currentCfi: '',
     currentChapterLabel: '',
     isSidebarOpen: false,
@@ -23,6 +26,7 @@ export default function App() {
     isDarkMode: false,
     isLoading: false,
     loadingMessage: '',
+    hasAudio: false,
     isAudioPlaying: false,
     audioCurrentTime: 0,
     audioDuration: 0,
@@ -111,6 +115,13 @@ export default function App() {
       }
   }, [view]);
 
+  // 同步书签到数据库
+  useEffect(() => {
+      if (view === 'reader' && currentBookId) {
+          db.updateBookBookmarks(currentBookId, state.bookmarks);
+      }
+  }, [state.bookmarks, currentBookId, view]);
+
   const refreshLibrary = async () => {
       try {
           const books = await db.getAllBooks();
@@ -137,6 +148,8 @@ export default function App() {
               controller.current.setVolume(val / 100);
           } else if (key === 'fontSize') {
               controller.current.setFontSize(val);
+          } else if (key === 'layoutMode') {
+              controller.current.setLayoutMode(val);
           }
       }
   };
@@ -172,7 +185,8 @@ export default function App() {
                   title: meta.title || file.name,
                   author: meta.creator || 'Unknown',
                   coverUrl: coverUrl,
-                  addedAt: Date.now()
+                  addedAt: Date.now(),
+                  bookmarks: []
               };
 
               await db.addBook(newBook, file);
@@ -195,8 +209,9 @@ export default function App() {
           if (fileBlob) {
               setCurrentBookId(book.id);
               setView('reader');
+              // 稍微延迟以确保视图切换完成
               setTimeout(() => {
-                  controller.current?.loadFile(fileBlob, book.progress);
+                  controller.current?.loadFile(fileBlob, book.progress, book.bookmarks || []);
               }, 100);
           } else {
               alert('Book file not found!');
@@ -222,6 +237,13 @@ export default function App() {
       setState(s => ({ ...s, currentBook: null }));
       setCurrentBookId(null);
       refreshLibrary();
+  };
+
+  const handleAddBookmark = async () => {
+      if (controller.current) {
+          await controller.current.addBookmark();
+          alert('Bookmark added!');
+      }
   };
 
   useEffect(() => {
@@ -252,6 +274,28 @@ export default function App() {
                   {item.label}
               </div>
               {item.subitems && renderTOC(item.subitems, level + 1)}
+          </div>
+      ));
+  };
+
+  const renderBookmarks = () => {
+      if (state.bookmarks.length === 0) {
+          return <div className="p-4 text-gray-500">{t('noBookmarks')}</div>;
+      }
+      return state.bookmarks.map((bm) => (
+          <div key={bm.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-700">
+              <div 
+                  className="cursor-pointer truncate flex-1 text-gray-800 dark:text-gray-200" 
+                  onClick={() => {
+                      controller.current?.display(bm.cfi);
+                      setState(s => ({ ...s, isSidebarOpen: false }));
+                  }}
+              >
+                  {bm.label}
+              </div>
+              <button onClick={() => controller.current?.removeBookmark(bm.id)} className="text-red-500 hover:text-red-700 ml-2">
+                  <Icon name="trash" />
+              </button>
           </div>
       ));
   };
@@ -333,22 +377,42 @@ export default function App() {
             <button onClick={() => setState(s => ({ ...s, isSidebarOpen: !s.isSidebarOpen }))}><Icon name="bars"/></button>
             <button onClick={() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }))}><Icon name="cog"/></button>
         </div>
-        <div className="font-semibold truncate max-w-xs">{state.currentBook ? state.currentBook.title : 'Loading...'}</div>
-        <button onClick={() => updateSetting('darkMode', !state.isDarkMode)}>
-             <Icon name={state.isDarkMode ? 'sun' : 'moon'}/>
-        </button>
+        <div className="flex gap-2">
+            <button onClick={handleAddBookmark} className="hover:text-gray-300" title={t('addBookmark')}>
+                <Icon name="bookmark" />
+            </button>
+            <div className="w-px bg-gray-600 h-6 mx-2"></div>
+            <button onClick={() => updateSetting('darkMode', !state.isDarkMode)}>
+                <Icon name={state.isDarkMode ? 'sun' : 'moon'}/>
+            </button>
+        </div>
       </div>
 
       <div className="flex-1 relative overflow-hidden flex">
-          {/* 侧边栏 (目录) */}
-          <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-               <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
-                   <span>{t('tableOfContents')}</span>
-                   <button onClick={() => setState(s => ({ ...s, isSidebarOpen: false }))}><Icon name="times"/></button>
+          {/* 侧边栏 (目录/书签) */}
+          <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
+               <div className="flex border-b dark:border-gray-700">
+                   <button 
+                       className={`flex-1 p-3 font-bold ${sidebarTab === 'toc' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
+                       onClick={() => setSidebarTab('toc')}
+                   >
+                       {t('tableOfContents')}
+                   </button>
+                   <button 
+                       className={`flex-1 p-3 font-bold ${sidebarTab === 'bookmarks' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
+                       onClick={() => setSidebarTab('bookmarks')}
+                   >
+                       {t('bookmarks')}
+                   </button>
                </div>
-               <div className="overflow-y-auto h-full pb-20">
-                   {state.navigationMap.length > 0 ? renderTOC(state.navigationMap) : <div className="p-4 text-gray-500">{t('noTOC')}</div>}
+               <div className="overflow-y-auto flex-1 pb-20">
+                   {sidebarTab === 'toc' ? (
+                       state.navigationMap.length > 0 ? renderTOC(state.navigationMap) : <div className="p-4 text-gray-500">{t('noTOC')}</div>
+                   ) : (
+                       renderBookmarks()
+                   )}
                </div>
+               <button onClick={() => setState(s => ({ ...s, isSidebarOpen: false }))} className="absolute top-2 right-2 text-gray-500"><Icon name="times"/></button>
           </div>
 
           {/* 阅读区域 */}
@@ -394,6 +458,13 @@ export default function App() {
                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value)}>
                                    <option value="zh">中文</option>
                                    <option value="en">English</option>
+                               </select>
+                           </div>
+                           <div>
+                               <label className="block text-sm mb-1">{t('layout')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
+                                   <option value="single">{t('singlePage')}</option>
+                                   <option value="double">{t('doublePage')}</option>
                                </select>
                            </div>
                            <div>
@@ -469,7 +540,7 @@ export default function App() {
                                        <option value="">{t('selectModel')}</option>
                                        {state.ankiModels.map(m => <option key={m} value={m}>{m}</option>)}
                                    </select>
-                                   {['Word', 'Meaning', 'Sentence'].map(f => (
+                                   {['Word', 'Meaning', 'Sentence', 'Audio'].map(f => (
                                        <select key={f} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" 
                                          value={(tempAnki as any)[`${f.toLowerCase()}Field`]} 
                                          onChange={e => {
@@ -477,7 +548,7 @@ export default function App() {
                                             setTempAnki(v);
                                             if (controller.current) controller.current.ankiSettings = v;
                                        }}>
-                                           <option value="">{f} Field</option>
+                                           <option value="">{f === 'Audio' ? t('audioField') : (t as any)(`${f.toLowerCase()}Field`)}</option>
                                            {state.ankiFields.map(field => <option key={field} value={field}>{field}</option>)}
                                        </select>
                                    ))}
@@ -514,46 +585,48 @@ export default function App() {
           </div>
       )}
 
-      {/* 底部 / 音频播放器 */}
-      <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
-           <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
-               <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
-               <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
-               <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg" onClick={() => controller.current?.toggleAudio()}>
-                   <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
-               </button>
-               <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
-               
-               <div className="flex flex-col min-w-[150px]">
-                   <span className="text-xs truncate max-w-[150px] text-gray-800 dark:text-gray-200">{state.audioTitle || 'No Audio'}</span>
-                   <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                       <span>{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
-                       <input 
-                         type="range" 
-                         min="0" 
-                         max={state.audioDuration || 100} 
-                         value={state.audioCurrentTime} 
-                         onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
-                         className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer"
-                       />
-                       <span>{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+      {/* 底部 / 音频播放器 (仅当有音频时显示) */}
+      {state.hasAudio && (
+          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
+               <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
+                   <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg" onClick={() => controller.current?.toggleAudio()}>
+                       <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
+                   </button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
+                   
+                   <div className="flex flex-col min-w-[150px]">
+                       <span className="text-xs truncate max-w-[150px] text-gray-800 dark:text-gray-200">{state.audioTitle || 'No Audio'}</span>
+                       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                           <span>{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
+                           <input 
+                             type="range" 
+                             min="0" 
+                             max={state.audioDuration || 100} 
+                             value={state.audioCurrentTime} 
+                             onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
+                             className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                           />
+                           <span>{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+                       </div>
                    </div>
                </div>
-           </div>
 
-           <div className="flex items-center gap-4 mt-2 md:mt-0 text-gray-500 dark:text-gray-400">
-               <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.prevPage()}><Icon name="chevron-left"/></button>
-               <span className="font-mono text-sm">{t('pageNav')}</span>
-               <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.nextPage()}><Icon name="chevron-right"/></button>
-           </div>
-      </div>
+               <div className="flex items-center gap-4 mt-2 md:mt-0 text-gray-500 dark:text-gray-400">
+                   <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.prevPage()}><Icon name="chevron-left"/></button>
+                   <span className="font-mono text-sm">{t('pageNav')}</span>
+                   <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.nextPage()}><Icon name="chevron-right"/></button>
+               </div>
+          </div>
+      )}
 
       {state.selectionToolbarVisible && state.selectionRect && (
           <div 
             id="selection-toolbar"
             className="fixed bg-gray-800 text-white rounded-lg shadow-lg p-2 flex gap-2 z-50 animate-bounce-in"
             style={{ 
-                top: Math.max(10, state.selectionRect.top - 60) + 'px', // 向上偏移以显示在选区上方
+                top: Math.max(10, state.selectionRect.top - 60) + 'px', 
                 left: Math.min(window.innerWidth - 180, Math.max(10, state.selectionRect.left + state.selectionRect.width/2 - 90)) + 'px' 
             }}
           >
@@ -567,7 +640,6 @@ export default function App() {
                 className="p-2 hover:bg-gray-700 rounded transition-colors" 
                 title={t('addToAnki')} 
                 onClick={async () => {
-                    // 快速添加：使用选中文本作为单词和句子
                     try {
                         await controller.current?.addToAnki(state.selectedText, '', state.selectedText);
                         alert(t('addedToAnki'));

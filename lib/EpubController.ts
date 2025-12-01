@@ -1,4 +1,4 @@
-import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress } from '../types';
+import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from '../types';
 import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
@@ -31,6 +31,9 @@ export class EpubController {
         const savedSettings = localStorage.getItem('epubReaderSettings');
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
         if (!this.settings.language) this.settings.language = 'zh';
+        if (!this.settings.layoutMode) this.settings.layoutMode = 'single';
+        // 确保 theme 有默认值
+        if (!this.settings.theme) this.settings.theme = 'light';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
@@ -41,7 +44,8 @@ export class EpubController {
         
         this.setState({
             isDarkMode: this.settings.darkMode,
-            ankiConnected: false
+            ankiConnected: false,
+            hasAudio: false
         });
     }
 
@@ -85,16 +89,17 @@ export class EpubController {
             audioDuration: 0,
             audioTitle: '',
             audioList: [],
+            hasAudio: false,
             showAudioList: false,
             currentAudioFile: null,
             selectionToolbarVisible: false
         });
     }
 
-    public async loadFile(file: File | Blob, initialProgress?: BookProgress) {
+    public async loadFile(file: File | Blob, initialProgress?: BookProgress, bookmarks: Bookmark[] = []) {
         try {
             this.destroy();
-            this.setState({ isLoading: true, loadingMessage: this.t('opening') });
+            this.setState({ isLoading: true, loadingMessage: this.t('opening'), bookmarks: bookmarks });
             
             this.book = ePub(file);
             await this.book.ready;
@@ -108,34 +113,33 @@ export class EpubController {
                 loadingMessage: this.t('rendering')
             });
 
-            this.setState({ loadingMessage: this.t('parsingAudio') });
-            try {
-                await this.loadAudioFromEPUB();
-            } catch (e) {
-                console.warn('Audio parse warning:', e);
-            }
-
             if (this.containerRef) {
                 this.renderBook();
                 
-                if (initialProgress) {
-                    if (initialProgress.cfi) this.display(initialProgress.cfi);
-                    if (initialProgress.audioSrc) {
+                if (initialProgress && initialProgress.cfi) {
+                    this.display(initialProgress.cfi);
+                }
+            }
+
+            this.setState({ isLoading: false });
+
+            // 异步加载音频，不阻塞 UI
+            this.loadAudioFromEPUB().then(async () => {
+                if (this.state.hasAudio) {
+                    if (initialProgress && initialProgress.audioSrc) {
                         await this.playAudioFile(initialProgress.audioSrc, false);
                         if (initialProgress.audioTime) {
                             this.audioPlayer.currentTime = initialProgress.audioTime;
                             this.setState({ audioCurrentTime: initialProgress.audioTime });
                         }
-                    }
-                } else {
-                    // 第一次打开，默认加载第一个音频但不播放
-                    if (this.state.audioList.length > 0) {
+                    } else if (this.state.audioList.length > 0) {
+                        // 第一次打开，默认加载第一个音频但不播放
                         await this.playAudioFile(this.state.audioList[0], false);
                     }
                 }
-            }
-
-            this.setState({ isLoading: false });
+            }).catch(e => {
+                console.warn('Audio parse warning:', e);
+            });
 
         } catch (e: any) {
             console.error(e);
@@ -155,15 +159,24 @@ export class EpubController {
             allowScriptedContent: true
         });
 
-        this.rendition.themes.register('light', { body: { color: '#333', background: '#fff' } });
-        this.rendition.themes.register('dark', { body: { color: '#ddd', background: '#111' } });
-        this.rendition.themes.register('sepia', { body: { color: '#5f4b32', background: '#f6f1d1' } });
-        // 添加高亮样式
+        // 注册主题
+        // 注意：使用 !important 确保覆盖默认样式
+        this.rendition.themes.register('light', { body: { color: '#333 !important', background: '#fff !important' } });
+        this.rendition.themes.register('dark', { body: { color: '#ddd !important', background: '#111 !important' } });
+        this.rendition.themes.register('sepia', { body: { color: '#5f4b32 !important', background: '#f6f1d1 !important' } });
+        
+        // 注册高亮样式
         this.rendition.themes.register('highlight', { 
             '.highlight': { 'background-color': 'rgba(255, 235, 59, 0.5)' } 
         });
+        
+        // 注册音频高亮样式 - 使用更显眼的颜色
         this.rendition.themes.register('audio-highlight', { 
-            '.audio-highlight': { 'background-color': 'rgba(255, 255, 0, 0.4)', 'border-radius': '2px' } 
+            '.audio-highlight': { 
+                'background-color': 'rgba(255, 255, 0, 0.4) !important', 
+                'border-radius': '2px',
+                'transition': 'background-color 0.3s'
+            } 
         });
 
         this.rendition.on('relocated', (location: any) => {
@@ -174,11 +187,9 @@ export class EpubController {
             const range = contents.range(cfiRange);
             const text = range.toString();
             
-            // 尝试获取包含该文本的元素ID，用于音频跳转
             let elementId = null;
             let node = range.commonAncestorContainer;
             if (node.nodeType !== 1) node = node.parentNode;
-            // 向上查找最近的带ID的元素
             while (node && node.nodeName !== 'BODY') {
                 if (node.id) {
                     elementId = node.id;
@@ -210,49 +221,71 @@ export class EpubController {
 
         this.rendition.display();
         this.applySettings();
+        this.setLayoutMode(this.settings.layoutMode);
     }
 
-    public highlightSelection() {
-        // Epub.js annotations API (requires selection CFI)
-        // 这里的实现依赖于 rendition 能够访问当前的 selection
-        // 由于 selected 事件只给了 range 字符串，我们需要更高级的 API
-        // 简化实现：对当前选区执行 CSS wrap
-        if(!this.rendition) return;
-        // 注意：epub.js annotations 需要 CFI。我们在 selected 事件里其实拿到了 cfiRange，但没有存。
-        // 在实际应用中，你可能需要将 cfiRange 存入 state。
-        // 这里我们用一个简化的方式：用户点击高亮后，我们假设当前的 window.getSelection (如果是在iframe里) 还有效
-        // 或者，我们修改 selected 监听器去存储 cfiRange。
-        
-        // 为了简单起见，我们假设用户还在选区上。但因为 toolbar 在外面，点击 toolbar 可能会让 iframe 失去焦点。
-        // 更好的做法是在 selected 事件里存储 cfiRange。
-        // 鉴于 types.ts 尚未添加 selectedCfiRange，我们暂时不做持久化高亮，仅提示。
-        alert("Highlight function requires CFI persistence update."); 
+    public setLayoutMode(mode: 'single' | 'double') {
+        this.settings.layoutMode = mode;
+        this.saveSettings();
+        if (this.rendition) {
+            this.rendition.spread(mode === 'single' ? 'none' : 'auto');
+        }
     }
 
-    // 根据选中的元素ID跳转音频
+    public async addBookmark() {
+        if (!this.rendition) return;
+        const location = this.rendition.currentLocation();
+        if (location && location.start) {
+            let label = `Page ${location.start.displayed.page}`;
+            const newBookmark: Bookmark = {
+                id: new Date().getTime().toString(),
+                cfi: location.start.cfi,
+                label: label + ` (${new Date().toLocaleTimeString()})`,
+                createdAt: Date.now()
+            };
+            const newBookmarks = [...this.state.bookmarks, newBookmark];
+            this.setState({ bookmarks: newBookmarks });
+            return newBookmarks;
+        }
+        return null;
+    }
+
+    public removeBookmark(id: string) {
+        const newBookmarks = this.state.bookmarks.filter(b => b.id !== id);
+        this.setState({ bookmarks: newBookmarks });
+        return newBookmarks;
+    }
+
     public seekToElementId(elementId: string) {
         if (!elementId) {
-            alert(this.t('audioError')); // 复用错误提示，表示无法定位
+            alert(this.t('audioError'));
             return;
         }
 
-        // 在 mediaOverlayData 中查找匹配的 ID
-        // textSrc 格式通常是 "filename.xhtml#id"
         const fragment = this.mediaOverlayData.find(f => f.textSrc.endsWith('#' + elementId));
         
         if (fragment) {
-            // 如果音频文件不同，先切换
-            if (this.currentAudioFile !== fragment.audioSrc) {
-                this.playAudioFile(fragment.audioSrc, false).then(() => {
-                    this.seekAudio(this.parseTime(fragment.clipBegin));
-                    // 自动播放
-                    this.toggleAudio();
+            // 同步跳转文字
+            if (this.rendition) {
+                this.rendition.display(fragment.textSrc).then(() => {
+                    this.highlightElement(elementId);
                 });
-            } else {
+            }
+
+            // 音频切换和跳转
+            const playAndSeek = () => {
                 this.seekAudio(this.parseTime(fragment.clipBegin));
                 if (!this.state.isAudioPlaying) {
                     this.toggleAudio();
                 }
+            };
+
+            if (this.currentAudioFile !== fragment.audioSrc) {
+                this.playAudioFile(fragment.audioSrc, false).then(() => {
+                    playAndSeek();
+                });
+            } else {
+                playAndSeek();
             }
         } else {
             console.warn("No audio fragment found for ID:", elementId);
@@ -261,9 +294,12 @@ export class EpubController {
 
     public applySettings() {
         if (!this.rendition) return;
+        
         this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
-        const theme = this.settings.darkMode ? 'dark' : this.settings.theme;
-        this.rendition.themes.select(theme);
+        
+        // 强制应用主题逻辑
+        const themeToApply = this.settings.darkMode ? 'dark' : this.settings.theme;
+        this.rendition.themes.select(themeToApply);
     }
 
     public setFontSize(size: string) {
@@ -277,7 +313,8 @@ export class EpubController {
     public setTheme(theme: string) {
         this.settings.theme = theme as any;
         this.saveSettings();
-        if (this.rendition) {
+        // 如果当前是夜间模式，不要立即应用，直到夜间模式关闭
+        if (this.rendition && !this.settings.darkMode) {
             this.rendition.themes.select(theme);
         }
     }
@@ -285,8 +322,16 @@ export class EpubController {
     public toggleDarkMode(enabled: boolean) {
         this.settings.darkMode = enabled;
         this.saveSettings();
+        
         if (this.rendition) {
-            this.rendition.themes.select(enabled ? 'dark' : this.settings.theme);
+            if (enabled) {
+                this.rendition.themes.select('dark');
+            } else {
+                // 切换回白天模式时，应用用户选择的主题
+                // 确保 theme 存在，默认 'light'
+                const targetTheme = this.settings.theme || 'light';
+                this.rendition.themes.select(targetTheme);
+            }
         }
     }
 
@@ -309,6 +354,23 @@ export class EpubController {
 
     public display(target: string) {
         this.rendition?.display(target);
+    }
+
+    public highlightSelection() {
+        if(!this.rendition) return;
+        // 简化高亮实现
+        const selection = this.rendition.getContents()[0]?.window.getSelection();
+        if(selection && selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const span = document.createElement('span');
+            span.style.backgroundColor = 'rgba(255, 235, 59, 0.5)';
+            try {
+                range.surroundContents(span);
+                this.setState({ selectionToolbarVisible: false });
+            } catch(e) {
+                alert("Cannot highlight across block elements");
+            }
+        }
     }
 
     private bindAudioEvents() {
@@ -394,6 +456,8 @@ export class EpubController {
     }
 
     private async loadAudioFromEPUB() {
+        if (!this.book) return;
+
         const manifest = await this.book.loaded.manifest;
         const smilItems = Object.values(manifest).filter((item: any) => {
             if (!item || !item.href) return false;
@@ -415,7 +479,8 @@ export class EpubController {
         });
 
         const audioList = Array.from(this.audioGroups.keys());
-        this.setState({ audioList });
+        const hasAudio = audioList.length > 0;
+        this.setState({ audioList, hasAudio });
     }
 
     private async processSmil(item: any) {
@@ -536,7 +601,7 @@ export class EpubController {
         } catch (e) { console.error("Play error", e); }
     }
 
-    private updateAudioHighlight() {
+    private async updateAudioHighlight() {
         if (!this.state.isAudioPlaying || !this.currentAudioFile || !this.rendition) return;
         
         const frags = this.audioGroups.get(this.currentAudioFile);
@@ -555,23 +620,38 @@ export class EpubController {
             const id = parts.length > 1 ? parts[1] : null;
             
             if (id) {
+                // 清除旧高亮
                 this.clearAudioHighlight();
-                this.rendition.display(current.textSrc);
-
-                const apply = () => {
-                    const contents = this.rendition.getContents();
-                    for(const c of contents) {
-                        const el = c.document.getElementById(id);
-                        if (el) {
-                            el.classList.add('audio-highlight');
-                            el.style.backgroundColor = 'rgba(255, 255, 0, 0.3)';
-                        }
-                    }
-                };
                 
-                apply();
-                setTimeout(apply, 200);
+                // 关键修复：确保先跳转并等待页面加载完成
+                await this.rendition.display(current.textSrc);
+                
+                // 应用新高亮
+                this.highlightElement(id);
             }
+        }
+    }
+    
+    private highlightElement(id: string) {
+        if (!this.rendition) return;
+        const contents = this.rendition.getContents();
+        let found = false;
+        
+        for(const c of contents) {
+            const el = c.document.getElementById(id);
+            if (el) {
+                el.classList.add('audio-highlight');
+                // 强制应用样式以防 css 不生效
+                el.style.backgroundColor = 'rgba(255, 255, 0, 0.4)';
+                el.style.transition = 'background-color 0.3s';
+                el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                found = true;
+            }
+        }
+        
+        if (!found) {
+            // 如果没找到，可能是刚翻页 DOM 还没准备好，稍后重试
+            setTimeout(() => this.highlightElement(id), 200);
         }
     }
     
@@ -651,19 +731,57 @@ export class EpubController {
     }
 
     public async addToAnki(word: string, meaning: string, sentence: string) {
-        const { deck, model, wordField, meaningField, sentenceField, tagsField } = this.ankiSettings;
-        if (!deck || !model || !wordField) throw new Error("Anki settings incomplete");
+        const { deck, model, wordField, meaningField, sentenceField, audioField, tagsField } = this.ankiSettings;
         
-        const note = {
+        if (!deck || !model || (!wordField && !meaningField && !sentenceField && !audioField)) {
+            throw new Error(this.t('ankiFieldsConfigError'));
+        }
+        
+        const fields: Record<string, string> = {};
+        if (wordField) fields[wordField] = word;
+        if (meaningField) fields[meaningField] = meaning;
+        
+        if (sentenceField && sentence) {
+            const boldedSentence = sentence.replace(new RegExp(`(${word})`, 'gi'), '<b>$1</b>');
+            fields[sentenceField] = boldedSentence;
+        }
+
+        const note: any = {
             deckName: deck,
             modelName: model,
-            fields: {
-                [wordField]: word,
-                [meaningField]: meaning,
-                [sentenceField]: sentence
-            },
+            fields: fields,
             tags: tagsField.split(',').map(t => t.trim())
         };
+
+        if (audioField && this.state.selectedElementId && this.currentAudioFile) {
+            const fragment = this.mediaOverlayData.find(f => f.textSrc.endsWith('#' + this.state.selectedElementId));
+            if (fragment && fragment.audioSrc === this.currentAudioFile) {
+                const blobUrl = await this.findAudioBlob(fragment.audioSrc);
+                if (blobUrl) {
+                    const response = await fetch(blobUrl);
+                    const blob = await response.blob();
+                    const reader = new FileReader();
+                    const base64Audio = await new Promise<string>((resolve) => {
+                        reader.onloadend = () => {
+                            const result = reader.result as string;
+                            resolve(result.split(',')[1]);
+                        };
+                        reader.readAsDataURL(blob);
+                    });
+
+                    const ext = fragment.audioSrc.split('.').pop() || 'mp3';
+                    const filename = `anki_audio_${new Date().getTime()}.${ext}`;
+
+                    note.audio = [{
+                        url: "",
+                        data: base64Audio,
+                        filename: filename,
+                        fields: [audioField]
+                    }];
+                }
+            }
+        }
+        
         await this.ankiRequest('addNote', { note });
     }
     

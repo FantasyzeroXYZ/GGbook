@@ -1,5 +1,4 @@
-
-import { LibraryBook, BookProgress } from '../types';
+import { LibraryBook, BookProgress, Bookmark } from '../types';
 
 const DB_NAME = 'EpubReaderDB';
 const DB_VERSION = 1;
@@ -101,6 +100,25 @@ export class BooksDB {
                 const data = request.result as LibraryBook;
                 if (data) {
                     data.progress = progress;
+                    store.put(data);
+                }
+                resolve();
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async updateBookBookmarks(id: string, bookmarks: Bookmark[]): Promise<void> {
+        if (!this.db) await this.init();
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction(STORE_BOOKS, 'readwrite');
+            const store = transaction.objectStore(STORE_BOOKS);
+            const request = store.get(id);
+
+            request.onsuccess = () => {
+                const data = request.result as LibraryBook;
+                if (data) {
+                    data.bookmarks = bookmarks;
                     store.put(data);
                 }
                 resolve();

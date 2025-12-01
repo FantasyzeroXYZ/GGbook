@@ -10,14 +10,22 @@ export interface BookProgress {
     timestamp: number;
 }
 
+export interface Bookmark {
+    id: string;
+    cfi: string;
+    label: string;
+    createdAt: number;
+}
+
 // 书架中的书籍元数据
 export interface LibraryBook {
     id: string;
     title: string;
     author: string;
-    coverUrl?: string; // 封面图片的 blob URL 或 base64
+    coverUrl?: string;
     addedAt: number;
     progress?: BookProgress;
+    bookmarks?: Bookmark[];
 }
 
 export interface NavigationItem {
@@ -32,9 +40,10 @@ export interface AnkiSettings {
     port: number;
     deck: string;
     model: string;
-    wordField: string;
-    meaningField: string;
-    sentenceField: string;
+    wordField?: string; // Optional
+    meaningField?: string; // Optional
+    sentenceField?: string; // Optional
+    audioField?: string; // New: Optional Audio Field
     tagsField: string;
 }
 
@@ -42,6 +51,7 @@ export interface AppSettings {
     language: 'en' | 'zh';
     fontSize: 'small' | 'medium' | 'large' | 'xlarge';
     theme: 'light' | 'dark' | 'sepia';
+    layoutMode: 'single' | 'double'; // New: Single or Double page
     offlineMode: boolean;
     syncProgress: boolean;
     darkMode: boolean;
@@ -53,8 +63,9 @@ export interface AppSettings {
 export interface ReaderState {
     currentBook: Book | null;
     navigationMap: NavigationItem[];
-    currentCfi: string; // 书籍当前位置
-    currentChapterLabel: string; // 当前章节显示名称
+    bookmarks: Bookmark[]; // New: Current bookmarks
+    currentCfi: string;
+    currentChapterLabel: string;
     isSidebarOpen: boolean;
     isSettingsOpen: boolean;
     isDarkMode: boolean;
@@ -62,19 +73,20 @@ export interface ReaderState {
     loadingMessage: string;
     
     // 音频状态
+    hasAudio: boolean; // New: Does the book have audio?
     isAudioPlaying: boolean;
     audioCurrentTime: number;
     audioDuration: number;
     audioTitle: string;
-    audioList: string[]; // 按顺序的音频文件列表
-    showAudioList: boolean; // 切换音频列表 UI
-    currentAudioFile?: string | null; // 当前音频文件路径
+    audioList: string[];
+    showAudioList: boolean;
+    currentAudioFile?: string | null;
     
     // 词典/选词状态
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
-    selectedElementId: string | null; // 当前选中内容的 DOM ID (用于音频跳转)
+    selectedElementId: string | null;
     dictionaryModalVisible: boolean;
     dictionaryData: any | null;
     dictionaryLoading: boolean;
@@ -91,6 +103,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     language: 'zh',
     fontSize: 'medium',
     theme: 'light',
+    layoutMode: 'single',
     offlineMode: false,
     syncProgress: true,
     darkMode: false,
@@ -107,10 +120,10 @@ export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
     wordField: '',
     meaningField: '',
     sentenceField: '',
+    audioField: '',
     tagsField: 'epub-reader'
 };
 
-// 声明通过 CDN 加载的全局库
 declare global {
     const ePub: any;
     const JSZip: any;
