@@ -1,0 +1,40 @@
+name: Deploy static site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - test        # 当 test 分支推送时自动部署
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # 允许写入分支
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Checkout test branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js (可选，如果你不构建可以删掉)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Build the project
+        run: |
+          npm install
+          npm run build
+
+      - name: Deploy to test branch
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: test      # 部署目标分支
+          publish_dir: dist         # Vite 默认打包目录
+          force_orphan: true        # 清空旧内容重新部署
