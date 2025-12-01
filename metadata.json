@@ -1,0 +1,5 @@
+{
+  "name": "React EPUB Reader",
+  "description": "A feature-rich EPUB reader with audio synchronization, Anki integration, and pagination, migrated to React and TypeScript.",
+  "requestFramePermissions": []
+}
