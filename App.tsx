@@ -461,11 +461,12 @@ export default function App() {
                
                {state.currentBook && (
                    <>
-                       <div className="absolute top-0 bottom-0 left-0 w-16 z-20 cursor-pointer flex items-center justify-start pl-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.prevPage()}>
-                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity"><Icon name="chevron-left"/></div>
+                       {/* 缩小触发范围：将 w-16 改为 w-8 */}
+                       <div className="absolute top-0 bottom-0 left-0 w-8 z-20 cursor-pointer flex items-center justify-start pl-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.prevPage()}>
+                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity transform scale-75"><Icon name="chevron-left"/></div>
                        </div>
-                       <div className="absolute top-0 bottom-0 right-0 w-16 z-20 cursor-pointer flex items-center justify-end pr-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.nextPage()}>
-                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity"><Icon name="chevron-right"/></div>
+                       <div className="absolute top-0 bottom-0 right-0 w-8 z-20 cursor-pointer flex items-center justify-end pr-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.nextPage()}>
+                           <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity transform scale-75"><Icon name="chevron-right"/></div>
                        </div>
                    </>
                )}

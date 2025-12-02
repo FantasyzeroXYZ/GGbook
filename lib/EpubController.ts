@@ -198,7 +198,7 @@ export class EpubController {
             } 
         });
 
-        // 注入全局样式，禁止默认长按菜单和工具栏
+        // 注入全局样式，禁止默认长按菜单和工具栏，但允许选词和 Yomitan
         this.rendition.hooks.content.register((contents: any) => {
              const style = contents.document.createElement('style');
              style.innerHTML = `
@@ -206,6 +206,10 @@ export class EpubController {
                     -webkit-touch-callout: none !important; /* iOS 禁止默认菜单 */
                     -webkit-user-select: text !important; /* 允许选词 */
                     user-select: text !important;
+                    pointer-events: auto !important; /* 确保 Yomitan 可以获取事件 */
+                }
+                iframe {
+                    pointer-events: auto !important;
                 }
                 /* 尝试隐藏部分浏览器的默认弹窗，虽然不一定所有浏览器生效 */
                 ::selection {
@@ -840,11 +844,20 @@ export class EpubController {
 
         // 2. 初始化源节点 (单例模式，避免 createMediaElementSource 重复调用报错)
         if (!this.mediaElementSource) {
-            this.mediaElementSource = this.audioContext.createMediaElementSource(this.audioPlayer);
-            // 默认连接到输出设备，保证正常播放有声音
-            this.mediaElementSource.connect(this.audioContext.destination);
+            try {
+                this.mediaElementSource = this.audioContext.createMediaElementSource(this.audioPlayer);
+                // 默认连接到输出设备，保证正常播放有声音
+                this.mediaElementSource.connect(this.audioContext.destination);
+            } catch (e) {
+                console.error("Source creation failed, possibly due to existing context", e);
+                // 如果创建失败，可能需要重置 context 或做其他处理
+                // 但通常单例模式能避免此问题
+            }
         }
         
+        // 确保有 source 才能继续
+        if (!this.mediaElementSource) throw new Error("Audio source unavailable");
+
         // 3. 创建录制流目的地
         const dest = this.audioContext.createMediaStreamDestination();
         this.mediaElementSource.connect(dest);
@@ -863,18 +876,40 @@ export class EpubController {
         }
         
         const options = mimeType ? { mimeType } : undefined;
-        const recorder = new MediaRecorder(dest.stream, options);
+        let recorder: MediaRecorder;
+        try {
+             recorder = new MediaRecorder(dest.stream, options);
+        } catch (e) {
+             console.error("MediaRecorder init failed", e);
+             this.mediaElementSource.disconnect(dest);
+             throw new Error("Recorder init failed");
+        }
+
         const chunks: Blob[] = [];
         
         return new Promise((resolve, reject) => {
+            // 安全超时，防止永远不返回导致界面卡死
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error("Recording timeout"));
+            }, duration + 5000);
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                try {
+                     if (recorder.state !== 'inactive') recorder.stop();
+                } catch(e){}
+                try {
+                     this.mediaElementSource?.disconnect(dest);
+                } catch(e){}
+            };
+
             recorder.ondataavailable = (e) => {
                 if (e.data.size > 0) chunks.push(e.data);
             };
             
             recorder.onstop = async () => {
-                 // 断开录制连接
-                 this.mediaElementSource?.disconnect(dest);
-                 
+                 cleanup();
                  const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
                  const reader = new FileReader();
                  reader.onloadend = () => {
@@ -885,19 +920,32 @@ export class EpubController {
                  reader.readAsDataURL(blob);
             };
 
+            recorder.onerror = (e) => {
+                cleanup();
+                reject(e);
+            };
+
             // 5. 跳转并播放
             this.audioPlayer.currentTime = start;
             this.audioPlayer.play().then(() => {
-                recorder.start();
-                
-                // 定时停止
-                setTimeout(() => {
-                    if (recorder.state === 'recording') {
-                        recorder.stop();
-                        this.audioPlayer.pause();
-                    }
-                }, duration);
-            }).catch(reject);
+                try {
+                    recorder.start();
+                    
+                    // 定时停止
+                    setTimeout(() => {
+                        if (recorder.state === 'recording') {
+                            recorder.stop();
+                            this.audioPlayer.pause();
+                        }
+                    }, duration);
+                } catch (e) {
+                    cleanup();
+                    reject(e);
+                }
+            }).catch((e) => {
+                cleanup();
+                reject(e);
+            });
         });
     }
 
@@ -1023,6 +1071,7 @@ export class EpubController {
                      }
                  } catch (e) {
                      console.error("Audio recording failed", e);
+                     // 即使录制失败，也继续添加卡片（不含音频）
                  }
             }
         }
