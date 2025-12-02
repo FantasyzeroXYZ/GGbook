@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
 import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from './types';
@@ -14,6 +15,9 @@ export default function App() {
   const [libraryBooks, setLibraryBooks] = useState<LibraryBook[]>([]);
   const [currentBookId, setCurrentBookId] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('toc');
+
+  // Local state for Anki adding process to show specific loading UI
+  const [isAnkiAdding, setIsAnkiAdding] = useState(false);
 
   const [state, setState] = useState<ReaderState>({
     currentBook: null,
@@ -45,7 +49,8 @@ export default function App() {
     ankiConnected: false,
     ankiDecks: [],
     ankiModels: [],
-    ankiFields: []
+    ankiFields: [],
+    toastMessage: null
   });
 
   const [tempSettings, setTempSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
@@ -57,6 +62,22 @@ export default function App() {
   const t = (key: keyof typeof translations['en']) => {
       const lang = tempSettings.language || 'zh';
       return translations[lang][key];
+  };
+
+  // 格式化释义为 HTML
+  const formatDefinition = (data: any) => {
+      if (!data) return '';
+      let html = `<div><b>${data.word}</b> <span style="color:#666">${data.phonetic || ''}</span></div>`;
+      data.meanings.forEach((m: any) => {
+          html += `<div style="margin-top:5px"><i>${m.partOfSpeech}</i></div><ul>`;
+          m.definitions.slice(0, 3).forEach((d: any) => {
+               html += `<li>${d.definition}`;
+               if (d.example) html += `<br><small style="color:#888">Ex: ${d.example}</small>`;
+               html += `</li>`;
+          });
+          html += `</ul>`;
+      });
+      return html;
   };
 
   useEffect(() => {
@@ -241,8 +262,11 @@ export default function App() {
 
   const handleAddBookmark = async () => {
       if (controller.current) {
-          await controller.current.addBookmark();
-          alert('Bookmark added!');
+          const newBookmarks = await controller.current.addBookmark();
+          if (newBookmarks) {
+              setState(s => ({...s, toastMessage: "Bookmark Added!" }));
+              setTimeout(() => setState(s => ({...s, toastMessage: null })), 2000);
+          }
       }
   };
 
@@ -285,13 +309,14 @@ export default function App() {
       return state.bookmarks.map((bm) => (
           <div key={bm.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-700">
               <div 
-                  className="cursor-pointer truncate flex-1 text-gray-800 dark:text-gray-200" 
+                  className="cursor-pointer truncate flex-1 text-gray-800 dark:text-gray-200 flex flex-col" 
                   onClick={() => {
-                      controller.current?.display(bm.cfi);
+                      controller.current?.restoreBookmark(bm);
                       setState(s => ({ ...s, isSidebarOpen: false }));
                   }}
               >
-                  {bm.label}
+                  <span>{bm.label}</span>
+                  {bm.audioSrc && <span className="text-xs text-blue-500"><Icon name="volume-up"/> Audio saved</span>}
               </div>
               <button onClick={() => controller.current?.removeBookmark(bm.id)} className="text-red-500 hover:text-red-700 ml-2">
                   <Icon name="trash" />
@@ -303,7 +328,7 @@ export default function App() {
   // ===================== 书架视图 =====================
   if (view === 'library') {
       return (
-        <div className={`min-h-screen flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
+        <div className={`min-h-[100dvh] flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
             <div className="flex justify-between items-center p-4 bg-white dark:bg-gray-800 shadow-md">
                 <h1 className="text-xl font-bold flex items-center gap-2">
                     <Icon name="book-reader" /> React EPUB Reader
@@ -366,8 +391,12 @@ export default function App() {
   }
 
   // ===================== 阅读器视图 =====================
+  // 阻止浏览器默认右键菜单
   return (
-    <div className={`h-screen flex flex-col ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}>
+    <div 
+        className={`h-[100dvh] flex flex-col overflow-hidden ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}
+        onContextMenu={(e) => e.preventDefault()}
+    >
       
       {/* 顶部导航 */}
       <div className="flex justify-between items-center p-3 bg-gray-800 text-white shadow-md z-30 h-14 shrink-0 transition-colors duration-300">
@@ -433,10 +462,10 @@ export default function App() {
                
                {state.currentBook && (
                    <>
-                       <div className="absolute top-0 bottom-0 left-0 w-16 z-20 cursor-pointer flex items-center justify-start pl-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group" onClick={() => controller.current?.prevPage()}>
+                       <div className="absolute top-0 bottom-0 left-0 w-16 z-20 cursor-pointer flex items-center justify-start pl-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.prevPage()}>
                            <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity"><Icon name="chevron-left"/></div>
                        </div>
-                       <div className="absolute top-0 bottom-0 right-0 w-16 z-20 cursor-pointer flex items-center justify-end pr-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group" onClick={() => controller.current?.nextPage()}>
+                       <div className="absolute top-0 bottom-0 right-0 w-16 z-20 cursor-pointer flex items-center justify-end pr-2 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.nextPage()}>
                            <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity"><Icon name="chevron-right"/></div>
                        </div>
                    </>
@@ -444,32 +473,32 @@ export default function App() {
           </div>
 
           {/* 设置侧边栏 */}
-          <div className={`fixed inset-y-0 right-0 w-80 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t('settings')}</span>
                    <button onClick={() => setState(s => ({ ...s, isSettingsOpen: false }))}><Icon name="times"/></button>
                </div>
                <div className="p-4 overflow-y-auto h-full pb-20 space-y-6 text-gray-800 dark:text-gray-200">
                    <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">{t('appearance')}</h4>
-                       <div className="space-y-3">
+                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('appearance')}</h4>
+                       <div className="space-y-3 pl-4">
                            <div>
-                               <label className="block text-sm mb-1">{t('language')}</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value)}>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('language')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value)}>
                                    <option value="zh">中文</option>
                                    <option value="en">English</option>
                                </select>
                            </div>
                            <div>
-                               <label className="block text-sm mb-1">{t('layout')}</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('layout')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
                                    <option value="single">{t('singlePage')}</option>
                                    <option value="double">{t('doublePage')}</option>
                                </select>
                            </div>
                            <div>
-                               <label className="block text-sm mb-1">{t('fontSize')}</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.fontSize} onChange={(e) => updateSetting('fontSize', e.target.value)}>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('fontSize')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.fontSize} onChange={(e) => updateSetting('fontSize', e.target.value)}>
                                    <option value="small">{t('small')}</option>
                                    <option value="medium">{t('medium')}</option>
                                    <option value="large">{t('large')}</option>
@@ -477,8 +506,8 @@ export default function App() {
                                </select>
                            </div>
                            <div>
-                               <label className="block text-sm mb-1">{t('theme')}</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value)}>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('theme')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value)}>
                                    <option value="light">{t('light')}</option>
                                    <option value="dark">{t('dark')}</option>
                                    <option value="sepia">{t('sepia')}</option>
@@ -487,25 +516,25 @@ export default function App() {
                        </div>
                    </section>
                    <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">{t('audio')}</h4>
-                       <div className="space-y-3">
-                           <label className="flex items-center space-x-2">
-                               <input type="checkbox" checked={tempSettings.autoPlayAudio} onChange={e => updateSetting('autoPlayAudio', e.target.checked)} />
-                               <span>{t('autoPlay')}</span>
+                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('audio')}</h4>
+                       <div className="space-y-3 pl-4">
+                           <label className="flex items-center space-x-2 cursor-pointer">
+                               <input type="checkbox" checked={tempSettings.autoPlayAudio} onChange={e => updateSetting('autoPlayAudio', e.target.checked)} className="rounded text-blue-500" />
+                               <span className="text-sm">{t('autoPlay')}</span>
                            </label>
-                           <label className="flex items-center space-x-2">
-                               <input type="checkbox" checked={tempSettings.syncTextHighlight} onChange={e => updateSetting('syncTextHighlight', e.target.checked)} />
-                               <span>{t('syncHighlight')}</span>
+                           <label className="flex items-center space-x-2 cursor-pointer">
+                               <input type="checkbox" checked={tempSettings.syncTextHighlight} onChange={e => updateSetting('syncTextHighlight', e.target.checked)} className="rounded text-blue-500" />
+                               <span className="text-sm">{t('syncHighlight')}</span>
                            </label>
                            <div>
-                               <label className="block text-sm mb-1">{t('volume')}</label>
-                               <input type="range" min="0" max="100" value={tempSettings.audioVolume} onChange={e => updateSetting('audioVolume', parseInt(e.target.value))} className="w-full"/>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('volume')}</label>
+                               <input type="range" min="0" max="100" value={tempSettings.audioVolume} onChange={e => updateSetting('audioVolume', parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"/>
                            </div>
                        </div>
                    </section>
                    <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs">{t('ankiConnect')}</h4>
-                       <div className="space-y-3 text-sm">
+                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('ankiConnect')}</h4>
+                       <div className="space-y-3 text-sm pl-4">
                            <div className="flex gap-2">
                                <input className="w-2/3 p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder={t('host')} value={tempAnki.host} onChange={e => {
                                    const v = { ...tempAnki, host: e.target.value };
@@ -518,7 +547,7 @@ export default function App() {
                                    if (controller.current) controller.current.ankiSettings = v;
                                }}/>
                            </div>
-                           <button className="w-full py-2 bg-gray-200 dark:bg-gray-600 rounded hover:bg-gray-300 dark:hover:bg-gray-500" onClick={() => controller.current?.testAnki()}>{t('testConnection')}</button>
+                           <button className="w-full py-2 bg-gray-200 dark:bg-gray-600 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors" onClick={() => controller.current?.testAnki()}>{t('testConnection')}</button>
                            {state.ankiConnected && (
                                <>
                                    <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" value={tempAnki.deck} onChange={e => {
@@ -552,7 +581,7 @@ export default function App() {
                                            {state.ankiFields.map(field => <option key={field} value={field}>{field}</option>)}
                                        </select>
                                    ))}
-                                   <button className="w-full py-2 bg-blue-500 text-white rounded hover:bg-blue-600" onClick={() => controller.current?.saveAnkiSettings()}>{t('saveAnkiSettings')}</button>
+                                   <button className="w-full py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors" onClick={() => controller.current?.saveAnkiSettings()}>{t('saveAnkiSettings')}</button>
                                </>
                            )}
                        </div>
@@ -587,8 +616,8 @@ export default function App() {
 
       {/* 底部 / 音频播放器 (仅当有音频时显示) */}
       {state.hasAudio && (
-          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
-               <div className={`w-full flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
+          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
+               <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full">
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
                    <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
@@ -596,19 +625,19 @@ export default function App() {
                    </button>
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
                    
-                   <div className="flex flex-col flex-1 min-w-0 mx-2">
-                       <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1">{state.audioTitle || 'No Audio'}</span>
-                       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
-                           <span className="w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
+                   <div className="flex flex-col flex-1 min-w-0 mx-1 md:mx-2 overflow-hidden">
+                       <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1 w-full">{state.audioTitle || 'No Audio'}</span>
+                       <div className="flex items-center gap-1 md:gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
+                           <span className="w-8 md:w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
                            <input 
                              type="range" 
                              min="0" 
                              max={state.audioDuration || 100} 
                              value={state.audioCurrentTime} 
                              onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
-                             className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                             className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer min-w-0"
                            />
-                           <span className="w-10 shrink-0">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+                           <span className="w-8 md:w-10 shrink-0 text-left">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
                        </div>
                    </div>
                </div>
@@ -618,32 +647,40 @@ export default function App() {
       {state.selectionToolbarVisible && state.selectionRect && (
           <div 
             id="selection-toolbar"
-            className="fixed bg-gray-800 text-white rounded-lg shadow-lg p-2 flex gap-2 z-50 animate-bounce-in"
+            className="fixed bg-gray-800 text-white rounded-lg shadow-lg p-2 flex gap-2 z-50 animate-bounce-in max-w-[95vw] overflow-x-auto"
             style={{ 
                 top: Math.max(10, state.selectionRect.top - 60) + 'px', 
-                left: Math.min(window.innerWidth - 180, Math.max(10, state.selectionRect.left + state.selectionRect.width/2 - 90)) + 'px' 
+                left: Math.min(window.innerWidth - 220, Math.max(10, state.selectionRect.left + state.selectionRect.width/2 - 90)) + 'px' 
             }}
           >
               <button className="p-2 hover:bg-gray-700 rounded transition-colors" title={t('dictionary')} onClick={() => controller.current?.lookupWord(state.selectedText)}>
                   <Icon name="book" />
               </button>
+              <button className="p-2 hover:bg-gray-700 rounded transition-colors" title="Copy" onClick={() => controller.current?.copySelection()}>
+                  <Icon name="copy" />
+              </button>
               <button className="p-2 hover:bg-gray-700 rounded transition-colors" title="Highlight" onClick={() => controller.current?.highlightSelection()}>
                   <Icon name="highlighter" />
               </button>
               <button 
-                className="p-2 hover:bg-gray-700 rounded transition-colors" 
+                className={`p-2 rounded transition-colors ${isAnkiAdding ? 'bg-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'}`}
                 title={t('addToAnki')} 
+                disabled={isAnkiAdding}
                 onClick={async () => {
                     try {
-                        await controller.current?.addToAnki(state.selectedText, '', state.selectedText);
-                        alert(t('addedToAnki'));
-                        setState(s => ({...s, selectionToolbarVisible: false}));
+                        setIsAnkiAdding(true);
+                        // 使用选中的句子（如果有），否则使用选中的文本
+                        await controller.current?.addToAnki(state.selectedText, '', state.selectedSentence || state.selectedText);
+                        setState(s => ({...s, toastMessage: t('addedToAnki'), selectionToolbarVisible: false}));
+                        setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
                     } catch(e: any) {
                         alert(t('failed') + ': ' + e.message);
+                    } finally {
+                        setIsAnkiAdding(false);
                     }
                 }}
               >
-                  <Icon name="plus-square" />
+                  {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus-square" />}
               </button>
               <button 
                 className="p-2 hover:bg-gray-700 rounded transition-colors" 
@@ -653,6 +690,13 @@ export default function App() {
               >
                   <Icon name="crosshairs" className={!state.selectedElementId ? "opacity-50" : ""} />
               </button>
+          </div>
+      )}
+      
+      {/* Toast Notification */}
+      {state.toastMessage && (
+          <div className="fixed top-20 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-white px-4 py-2 rounded-full shadow-lg z-[60] animate-bounce-in">
+              {state.toastMessage}
           </div>
       )}
 
@@ -691,20 +735,24 @@ export default function App() {
                   <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-700 rounded-b-lg flex justify-end">
                       <button 
                         className={`px-4 py-2 rounded text-white flex items-center gap-2 ${state.ankiConnected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
-                        disabled={!state.ankiConnected || !state.dictionaryData}
+                        disabled={!state.ankiConnected || !state.dictionaryData || isAnkiAdding}
                         onClick={async () => {
                              if (!state.dictionaryData) return;
-                             const def = state.dictionaryData.meanings[0]?.definitions[0]?.definition || '';
+                             setIsAnkiAdding(true);
+                             const def = formatDefinition(state.dictionaryData);
                              try {
-                                 await controller.current?.addToAnki(state.selectedText, def, state.selectedText);
-                                 alert(t('addedToAnki'));
-                                 setState(s => ({ ...s, dictionaryModalVisible: false }));
+                                 await controller.current?.addToAnki(state.selectedText, def, state.selectedSentence || state.selectedText);
+                                 setState(s => ({...s, toastMessage: t('addedToAnki'), dictionaryModalVisible: false}));
+                                 setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
                              } catch(e: any) {
                                  alert(t('failed') + ': ' + e.message);
+                             } finally {
+                                 setIsAnkiAdding(false);
                              }
                         }}
                       >
-                          <Icon name="plus"/> {t('addToAnki')}
+                          {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus"/>}
+                          {t('addToAnki')}
                       </button>
                   </div>
               </div>

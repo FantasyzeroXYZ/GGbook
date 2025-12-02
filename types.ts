@@ -1,3 +1,4 @@
+
 export interface Book {
     title: string;
     author: string;
@@ -15,6 +16,9 @@ export interface Bookmark {
     cfi: string;
     label: string;
     createdAt: number;
+    // New: Audio state for bookmarks
+    audioSrc?: string;
+    audioTime?: number;
 }
 
 // 书架中的书籍元数据
@@ -86,6 +90,7 @@ export interface ReaderState {
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
+    selectedSentence?: string; // New: Captured sentence context
     selectedElementId: string | null;
     dictionaryModalVisible: boolean;
     dictionaryData: any | null;
@@ -97,6 +102,9 @@ export interface ReaderState {
     ankiDecks: string[];
     ankiModels: string[];
     ankiFields: string[];
+
+    // UI Feedback
+    toastMessage: string | null;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

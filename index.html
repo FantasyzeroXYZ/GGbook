@@ -1,8 +1,14 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#111827" media="(prefers-color-scheme: dark)">
+    
     <title>React EPUB Reader</title>
     <!-- 依赖项 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -10,6 +16,15 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+      /* 全局重置 */
+      html, body {
+        height: 100%;
+        width: 100%;
+        overflow-x: hidden;
+        overscroll-behavior-y: none; /* 阻止橡皮筋效果 */
+        -webkit-touch-callout: none; /* iOS 禁用默认长按菜单 */
+      }
+      
       /* 分页内容的自定义滚动条隐藏 */
       .no-scrollbar::-webkit-scrollbar {
         display: none;
@@ -46,6 +61,15 @@
       /* 深色模式下滑块覆盖样式 */
       .dark input[type=range]::-webkit-slider-thumb {
          background: #3498db;
+      }
+      
+      /* 动画效果 */
+      @keyframes bounceIn {
+        0% { transform: scale(0.9); opacity: 0; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      .animate-bounce-in {
+        animation: bounceIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       }
     </style>
   <script type="importmap">
