@@ -587,19 +587,19 @@ export default function App() {
 
       {/* 底部 / 音频播放器 (仅当有音频时显示) */}
       {state.hasAudio && (
-          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex flex-col md:flex-row items-center justify-between z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
-               <div className={`w-full md:w-auto flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
-                   <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg" onClick={() => controller.current?.toggleAudio()}>
+          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300">
+               <div className={`w-full flex items-center gap-4 px-4 transition-transform ${state.isAudioPlaying || state.audioDuration > 0 || state.currentAudioFile ? 'translate-y-0' : 'translate-y-20 opacity-0 md:translate-y-0 md:opacity-100'}`}>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
+                   <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
                        <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
                    </button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
                    
-                   <div className="flex flex-col min-w-[150px]">
-                       <span className="text-xs truncate max-w-[150px] text-gray-800 dark:text-gray-200">{state.audioTitle || 'No Audio'}</span>
-                       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                           <span>{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
+                   <div className="flex flex-col flex-1 min-w-0 mx-2">
+                       <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1">{state.audioTitle || 'No Audio'}</span>
+                       <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
+                           <span className="w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
                            <input 
                              type="range" 
                              min="0" 
@@ -608,15 +608,9 @@ export default function App() {
                              onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
                              className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer"
                            />
-                           <span>{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+                           <span className="w-10 shrink-0">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
                        </div>
                    </div>
-               </div>
-
-               <div className="flex items-center gap-4 mt-2 md:mt-0 text-gray-500 dark:text-gray-400">
-                   <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.prevPage()}><Icon name="chevron-left"/></button>
-                   <span className="font-mono text-sm">{t('pageNav')}</span>
-                   <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded" onClick={() => controller.current?.nextPage()}><Icon name="chevron-right"/></button>
                </div>
           </div>
       )}
