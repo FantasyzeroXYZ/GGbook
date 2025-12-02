@@ -4,7 +4,9 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // 如果你的 GitHub Pages 部署在子路径下（例如 user.github.io/repo-name/），
-  // 请取消下面一行的注释并将 '/repo-name/' 替换为你的仓库名称
-  // base: '/react-epub-reader/',
+  // 使用相对路径，适配 GitHub Pages 或任何静态托管
+  base: './',
+  server: {
+    host: '0.0.0.0'
+  }
 });

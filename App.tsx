@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EpubController } from './lib/EpubController';
 import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from './types';
@@ -472,16 +471,20 @@ export default function App() {
                )}
           </div>
 
-          {/* 设置侧边栏 */}
+          {/* 设置侧边栏 - 使用 details/summary 实现默认折叠 */}
           <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t('settings')}</span>
                    <button onClick={() => setState(s => ({ ...s, isSettingsOpen: false }))}><Icon name="times"/></button>
                </div>
-               <div className="p-4 overflow-y-auto h-full pb-20 space-y-6 text-gray-800 dark:text-gray-200">
-                   <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('appearance')}</h4>
-                       <div className="space-y-3 pl-4">
+               <div className="p-4 overflow-y-auto h-full pb-20 space-y-4 text-gray-800 dark:text-gray-200">
+                   {/* 外观设置 */}
+                   <details className="group" open>
+                       <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center">
+                           {t('appearance')}
+                           <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-[10px]" /></span>
+                       </summary>
+                       <div className="space-y-3 pt-3 pl-2">
                            <div>
                                <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('language')}</label>
                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value)}>
@@ -514,10 +517,15 @@ export default function App() {
                                </select>
                            </div>
                        </div>
-                   </section>
-                   <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('audio')}</h4>
-                       <div className="space-y-3 pl-4">
+                   </details>
+
+                   {/* 音频设置 */}
+                   <details className="group">
+                       <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center">
+                           {t('audio')}
+                           <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-[10px]" /></span>
+                       </summary>
+                       <div className="space-y-3 pt-3 pl-2">
                            <label className="flex items-center space-x-2 cursor-pointer">
                                <input type="checkbox" checked={tempSettings.autoPlayAudio} onChange={e => updateSetting('autoPlayAudio', e.target.checked)} className="rounded text-blue-500" />
                                <span className="text-sm">{t('autoPlay')}</span>
@@ -531,10 +539,15 @@ export default function App() {
                                <input type="range" min="0" max="100" value={tempSettings.audioVolume} onChange={e => updateSetting('audioVolume', parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"/>
                            </div>
                        </div>
-                   </section>
-                   <section>
-                       <h4 className="font-bold mb-2 text-gray-500 uppercase text-xs border-b pb-1">{t('ankiConnect')}</h4>
-                       <div className="space-y-3 text-sm pl-4">
+                   </details>
+                   
+                   {/* Anki 设置 */}
+                   <details className="group">
+                       <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center">
+                           {t('ankiConnect')}
+                           <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-[10px]" /></span>
+                       </summary>
+                       <div className="space-y-3 text-sm pt-3 pl-2">
                            <div className="flex gap-2">
                                <input className="w-2/3 p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder={t('host')} value={tempAnki.host} onChange={e => {
                                    const v = { ...tempAnki, host: e.target.value };
@@ -585,7 +598,7 @@ export default function App() {
                                </>
                            )}
                        </div>
-                   </section>
+                   </details>
                </div>
           </div>
       </div>
@@ -617,7 +630,7 @@ export default function App() {
       {/* 底部 / 音频播放器 (仅当有音频时显示) */}
       {state.hasAudio && (
           <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
-               <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full">
+               <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full overflow-hidden">
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
                    <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>

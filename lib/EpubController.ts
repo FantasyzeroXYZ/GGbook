@@ -1,4 +1,3 @@
-
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from '../types';
 import { translations, Language } from './locales';
 
@@ -25,6 +24,7 @@ export class EpubController {
     // 音频缓存优化
     private cachedAudioSrc: string | null = null;
     private cachedAudioBuffer: AudioBuffer | null = null;
+    private isDecoding: boolean = false;
     
     // 引用
     private containerRef: HTMLElement | null = null;
@@ -39,7 +39,6 @@ export class EpubController {
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
         if (!this.settings.language) this.settings.language = 'zh';
         if (!this.settings.layoutMode) this.settings.layoutMode = 'single';
-        // 确保 theme 有默认值
         if (!this.settings.theme) this.settings.theme = 'light';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
@@ -156,7 +155,7 @@ export class EpubController {
                             this.setState({ audioCurrentTime: initialProgress.audioTime });
                         }
                     } else if (this.state.audioList.length > 0) {
-                        // 第一次打开，默认加载第一个音频但不播放
+                        // 第一次打开，加载第一个音频用于预热，但不播放
                         await this.playAudioFile(this.state.audioList[0], false);
                     }
                 }
@@ -202,15 +201,28 @@ export class EpubController {
             } 
         });
 
-        // 注入全局样式，禁止默认长按菜单
+        // 注入全局样式，禁止默认长按菜单和工具栏
         this.rendition.hooks.content.register((contents: any) => {
              const style = contents.document.createElement('style');
              style.innerHTML = `
                 html, body { 
-                    -webkit-touch-callout: none !important; 
+                    -webkit-touch-callout: none !important; /* iOS 禁止默认菜单 */
+                    -webkit-user-select: text !important; /* 允许选词 */
+                    user-select: text !important;
+                }
+                /* 尝试隐藏部分浏览器的默认弹窗，虽然不一定所有浏览器生效 */
+                ::selection {
+                    background: rgba(59, 130, 246, 0.3); 
                 }
              `;
              contents.document.head.appendChild(style);
+
+             // 关键：阻止右键菜单，通常可以阻止默认的“复制/分享”弹出框
+             contents.document.addEventListener('contextmenu', (e: Event) => {
+                 e.preventDefault();
+                 e.stopPropagation();
+                 return false;
+             }, false);
         });
 
         this.rendition.on('relocated', (location: any) => {
@@ -331,12 +343,18 @@ export class EpubController {
         
         await this.rendition.display(bookmark.cfi);
         
-        // 恢复音频：如果有记录音频，则加载并跳转，但不自动播放（暂停状态）
+        // 恢复音频逻辑优化
         if (bookmark.audioSrc && this.state.hasAudio) {
+            // 如果书签有音频，跳转并暂停
             await this.playAudioFile(bookmark.audioSrc, false); // false = do not play
             if (bookmark.audioTime !== undefined) {
                 this.seekAudio(bookmark.audioTime);
-                // 确保暂停
+                this.audioPlayer.pause();
+                this.setState({ isAudioPlaying: false });
+            }
+        } else {
+            // 如果书签没有音频，暂停当前播放器（如果在播放）
+            if (this.state.isAudioPlaying) {
                 this.audioPlayer.pause();
                 this.setState({ isAudioPlaying: false });
             }
@@ -398,7 +416,7 @@ export class EpubController {
         
         // 强制应用主题逻辑
         const themeToApply = this.settings.darkMode ? 'dark' : this.settings.theme;
-        this.rendition.themes.select(themeToApply);
+        this.updateThemeColors(themeToApply);
     }
 
     public setFontSize(size: string) {
@@ -414,17 +432,7 @@ export class EpubController {
         this.saveSettings();
         
         if (!this.settings.darkMode) {
-            const bg = theme === 'sepia' ? '#f6f1d1' : '#f3f4f6';
-            document.body.style.backgroundColor = bg;
-            if (this.rendition) {
-                this.rendition.themes.select(theme);
-                // 修复切换回日间模式时的残影：显式设置 iframe body 背景
-                const contents = this.rendition.getContents();
-                contents.forEach((c: any) => {
-                    c.document.body.style.backgroundColor = theme === 'sepia' ? '#f6f1d1' : '#fff';
-                    c.document.body.style.color = theme === 'sepia' ? '#5f4b32' : '#333';
-                });
-            }
+            this.updateThemeColors(theme);
         }
     }
 
@@ -433,31 +441,49 @@ export class EpubController {
         this.saveSettings();
         
         if (enabled) {
-            document.body.style.backgroundColor = '#111827';
+            this.updateThemeColors('dark');
         } else {
             const targetTheme = this.settings.theme || 'light';
-             document.body.style.backgroundColor = targetTheme === 'sepia' ? '#f6f1d1' : '#f3f4f6';
+            this.updateThemeColors(targetTheme);
         }
+    }
+    
+    // 统一处理主题颜色，防止残留
+    private updateThemeColors(theme: string) {
+        let bgColor = '#fff';
+        let txtColor = '#333';
         
+        if (theme === 'dark') {
+            bgColor = '#111827';
+            txtColor = '#ddd';
+        } else if (theme === 'sepia') {
+            bgColor = '#f6f1d1';
+            txtColor = '#5f4b32';
+        } else { // light
+            bgColor = '#f3f4f6'; // app bg
+            txtColor = '#333';
+        }
+
+        // 设置 App Body 背景
+        document.body.style.backgroundColor = bgColor;
+
         if (this.rendition) {
-            if (enabled) {
-                this.rendition.themes.select('dark');
-                // 修复残影
-                const contents = this.rendition.getContents();
-                contents.forEach((c: any) => {
-                    c.document.body.style.backgroundColor = '#111';
-                    c.document.body.style.color = '#ddd';
-                });
-            } else {
-                const targetTheme = this.settings.theme || 'light';
-                this.rendition.themes.select(targetTheme);
-                // 修复残影
-                const contents = this.rendition.getContents();
-                contents.forEach((c: any) => {
-                    c.document.body.style.backgroundColor = targetTheme === 'sepia' ? '#f6f1d1' : '#fff';
-                    c.document.body.style.color = targetTheme === 'sepia' ? '#5f4b32' : '#333';
-                });
-            }
+            // EPub.js 主题切换
+            this.rendition.themes.select(theme);
+            
+            // 强力清除 iframe 内部的样式残留
+            const contents = this.rendition.getContents();
+            contents.forEach((c: any) => {
+                const doc = c.document;
+                const iframeBodyBg = theme === 'light' ? '#fff' : (theme === 'dark' ? '#111' : '#f6f1d1');
+                
+                doc.documentElement.style.backgroundColor = iframeBodyBg;
+                doc.body.style.backgroundColor = iframeBodyBg;
+                doc.body.style.color = txtColor;
+                
+                // 确保样式被应用
+                doc.body.style.cssText += `;background-color: ${iframeBodyBg} !important; color: ${txtColor} !important;`;
+            });
         }
     }
 
@@ -707,6 +733,35 @@ export class EpubController {
         return null;
     }
 
+    // 预热/后台解码音频，解决制卡卡顿
+    private async triggerBackgroundDecode(blobUrl: string, audioSrc: string) {
+        if (this.cachedAudioSrc === audioSrc && this.cachedAudioBuffer) return;
+        if (this.isDecoding) return;
+        
+        console.log("Triggering background audio decode for Anki...");
+        this.isDecoding = true;
+        try {
+            if (!this.audioContext) {
+                this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            }
+            const response = await fetch(blobUrl);
+            const arrayBuffer = await response.arrayBuffer();
+            
+            this.audioContext!.decodeAudioData(arrayBuffer, (decoded) => {
+                console.log("Audio decoded successfully in background");
+                this.cachedAudioBuffer = decoded;
+                this.cachedAudioSrc = audioSrc;
+                this.isDecoding = false;
+            }, (e) => {
+                console.warn("Background decode failed", e);
+                this.isDecoding = false;
+            });
+        } catch (e) {
+            console.warn("Background fetch failed", e);
+            this.isDecoding = false;
+        }
+    }
+
     public async playAudioFile(audioPath: string, autoPlay: boolean = true) {
         try {
             this.currentAudioFile = audioPath;
@@ -714,6 +769,10 @@ export class EpubController {
             if (url) {
                 this.audioPlayer.src = url;
                 const title = audioPath.split('/').pop() || 'Audio';
+                
+                // 触发后台解码，以便用户制卡时无需等待
+                this.triggerBackgroundDecode(url, audioPath);
+
                 if (autoPlay) {
                     this.audioPlayer.play().catch(e => console.error('Play failed', e));
                     this.setState({ isAudioPlaying: true, audioTitle: title, currentAudioFile: audioPath });
@@ -812,10 +871,11 @@ export class EpubController {
 
         let audioBuffer: AudioBuffer;
 
-        // 优化：缓存解码后的 AudioBuffer
+        // 优化：使用缓存或等待解码
         if (this.cachedAudioSrc === audioSrc && this.cachedAudioBuffer) {
              audioBuffer = this.cachedAudioBuffer;
         } else {
+             // 如果没有缓存，必须同步等待解码
              // 1. Get Blob URL
              const blobUrl = await this.findAudioBlob(audioSrc);
              if (!blobUrl) throw new Error("Audio file not found inside EPUB");
@@ -827,7 +887,7 @@ export class EpubController {
              // 3. Decode
              audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
              
-             // Update Cache
+             // Update Cache for next time
              this.cachedAudioSrc = audioSrc;
              this.cachedAudioBuffer = audioBuffer;
         }
@@ -995,7 +1055,7 @@ export class EpubController {
                 fragment = this.mediaOverlayData.find(f => f.textSrc.endsWith('#' + this.state.selectedElementId));
             }
             
-            // 如果没有 ID，尝试根据播放进度和当前文件匹配（如果用户没点选特定句子，只是想制卡）
+            // 如果没有 ID，尝试根据播放进度和当前文件匹配
             if (!fragment && this.state.isAudioPlaying) {
                  const frags = this.audioGroups.get(this.currentAudioFile);
                  const time = this.audioPlayer.currentTime;
@@ -1015,10 +1075,10 @@ export class EpubController {
                      const end = this.parseTime(fragment.clipEnd);
                      const duration = end - start;
 
-                     // 只有当有有效时长时才截取，否则 fall back 到整段（不建议）
                      if (duration > 0) {
                          // 在 UI 层提示正在处理
                          console.log(`Slicing audio: ${start} -> ${end}`);
+                         // 此时如果缓存已经就绪（预热过），速度会非常快
                          const base64Wav = await this.cutAudioBlob(fragment.audioSrc, start, end);
                          const filename = `anki_${new Date().getTime()}.wav`;
                          note.audio = [{
@@ -1030,7 +1090,6 @@ export class EpubController {
                      }
                  } catch (e) {
                      console.error("Audio slicing failed", e);
-                     // Fallback mechanism can be added here if needed, but usually better to fail audio than send wrong full file
                  }
             }
         }
