@@ -58,6 +58,10 @@ export default function App() {
 
   const controller = useRef<EpubController | null>(null);
   const viewerRef = useRef<HTMLDivElement>(null);
+  
+  // Use a ref to track loading state for event listeners (closures)
+  const isLoadingRef = useRef(state.isLoading);
+  useEffect(() => { isLoadingRef.current = state.isLoading; }, [state.isLoading]);
 
   const t = (key: keyof typeof translations['en']) => {
       const lang = tempSettings.language || 'zh';
@@ -98,6 +102,8 @@ export default function App() {
 
     const handleKey = (e: KeyboardEvent) => {
         if (view !== 'reader') return;
+        if (isLoadingRef.current) return; // 阻止加载时的键盘操作
+        
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
         
         // Handle RTL page direction for arrow keys
@@ -124,9 +130,11 @@ export default function App() {
       if (view !== 'reader' || !currentBookId) return;
       
       const saveTimer = setTimeout(() => {
-          if (state.currentCfi) {
+          if (state.currentCfi && controller.current) {
+              const percentage = controller.current.getCurrentPercentage();
               const progress: BookProgress = {
                   cfi: state.currentCfi,
+                  percentage: percentage,
                   audioSrc: state.currentAudioFile || undefined,
                   audioTime: state.audioCurrentTime,
                   timestamp: Date.now()
@@ -383,8 +391,11 @@ export default function App() {
                                 <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400 truncate hidden sm:block">{book.author}</p>
                             </div>
                             {book.progress && (
-                                <div className="absolute bottom-1 right-1 bg-black/50 text-white text-[10px] px-1 rounded">
-                                    {Math.floor((book.progress.audioTime || 0) / 60)}m
+                                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200 dark:bg-gray-700">
+                                    <div 
+                                        className="h-full bg-blue-500 transition-all duration-300" 
+                                        style={{ width: `${Math.round((book.progress.percentage || 0) * 100)}%` }}
+                                    ></div>
                                 </div>
                             )}
                             <button 
@@ -402,6 +413,7 @@ export default function App() {
       );
   }
 
+  // ... (rest of App component)
   // ===================== 阅读器视图 =====================
   // 阻止浏览器默认右键菜单
   return (
@@ -480,7 +492,7 @@ export default function App() {
                  className={`flex-1 relative bg-white dark:bg-gray-800 ${!state.currentBook ? 'hidden' : ''}`}
                />
                
-               {state.currentBook && (
+               {state.currentBook && !state.isLoading && (
                    <>
                        {/* 缩小触发范围：将 w-16 改为 w-8 */}
                        <div className="absolute top-0 bottom-0 left-0 w-8 z-20 cursor-pointer flex items-center justify-start pl-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" 

@@ -83,16 +83,25 @@ export class EpubController {
 
     public destroy() {
         if (this.rendition) {
-            this.rendition.destroy();
+            try {
+                this.rendition.destroy();
+            } catch (e) { console.warn("Rendition destroy failed", e); }
             this.rendition = null;
         }
         if (this.book) {
-            this.book.destroy();
+            try {
+                this.book.destroy();
+            } catch (e) { console.warn("Book destroy failed", e); }
             this.book = null;
         }
         
         this.audioPlayer.pause();
-        this.audioPlayer.src = '';
+        // 关键修复：使用 removeAttribute 避免 setting src to '' 导致的 ERROR code 4
+        this.audioPlayer.removeAttribute('src');
+        try {
+            this.audioPlayer.load();
+        } catch(e) {}
+
         this.mediaOverlayData = [];
         this.audioGroups.clear();
         this.currentAudioFile = null;
@@ -125,6 +134,9 @@ export class EpubController {
             this.book = ePub(file);
             await this.book.ready;
 
+            // Generate locations in background for progress calculation
+            this.book.locations.generate(1000).catch((e: any) => console.warn("Locations generation failed", e));
+
             const metadata = await this.book.loaded.metadata;
             const navigation = await this.book.loaded.navigation;
             
@@ -137,9 +149,19 @@ export class EpubController {
             if (this.containerRef) {
                 this.renderBook();
                 
-                if (initialProgress && initialProgress.cfi) {
-                    this.display(initialProgress.cfi);
+                // 关键修改：等待 display 完成后再设置 isLoading 为 false
+                try {
+                    if (initialProgress && initialProgress.cfi) {
+                        await this.display(initialProgress.cfi);
+                    } else {
+                        await this.display();
+                    }
+                } catch (renderError) {
+                    console.error("Initial render failed", renderError);
                 }
+                
+                // 在渲染完成后应用设置，确保 CSS 和 Theme 能正确注入到 iframe 中
+                this.applySettings();
             }
 
             this.setState({ isLoading: false });
@@ -181,7 +203,6 @@ export class EpubController {
         });
 
         // 注册主题
-        // 注意：使用 !important 确保覆盖默认样式
         this.rendition.themes.register('light', { body: { color: '#333 !important', background: '#fff !important' } });
         this.rendition.themes.register('dark', { body: { color: '#ddd !important', background: '#111 !important' } });
         this.rendition.themes.register('sepia', { body: { color: '#5f4b32 !important', background: '#f6f1d1 !important' } });
@@ -191,7 +212,6 @@ export class EpubController {
             '.highlight': { 'background-color': 'rgba(255, 235, 59, 0.5)' } 
         });
         
-        // 注册音频高亮样式 - 使用更显眼的颜色
         this.rendition.themes.register('audio-highlight', { 
             '.audio-highlight': { 
                 'background-color': 'rgba(255, 255, 0, 0.4) !important', 
@@ -200,7 +220,7 @@ export class EpubController {
             } 
         });
 
-        // 注入全局样式，禁止默认长按菜单和工具栏，但允许选词和 Yomitan
+        // 注入全局样式
         this.rendition.hooks.content.register((contents: any) => {
              const style = contents.document.createElement('style');
              style.id = 'epub-reader-custom-style';
@@ -214,18 +234,16 @@ export class EpubController {
                 iframe {
                     pointer-events: auto !important;
                 }
-                /* 关键：防止 Yomitan 选中注音假名，避免干扰取词 */
                 rt {
                     user-select: none !important;
                     -webkit-user-select: none !important;
                 }
-                /* 尝试隐藏部分浏览器的默认弹窗，虽然不一定所有浏览器生效 */
                 ::selection {
                     background: rgba(59, 130, 246, 0.3); 
                 }
              `;
              
-             // 根据当前设置应用横竖排，使用 !important 强制覆盖
+             // 根据当前设置应用横竖排
              if (this.settings.direction === 'vertical') {
                  css += `
                     html, body {
@@ -245,7 +263,6 @@ export class EpubController {
              style.innerHTML = css;
              contents.document.head.appendChild(style);
              
-             // 关键：阻止右键菜单，通常可以阻止默认的“复制/分享”弹出框
              contents.document.addEventListener('contextmenu', (e: Event) => {
                  e.preventDefault();
                  e.stopPropagation();
@@ -278,7 +295,6 @@ export class EpubController {
             
             let sentence = text;
             try {
-                // 尝试提取完整句子
                 const block = range.commonAncestorContainer.nodeType === 1 
                     ? range.commonAncestorContainer 
                     : range.commonAncestorContainer.parentNode;
@@ -304,7 +320,6 @@ export class EpubController {
                     height: rect.height
                 } as DOMRect; 
                 
-                // 手机端避免工具栏超出屏幕
                 let adjustedTop = absoluteRect.top - 60;
                 let adjustedLeft = absoluteRect.left + absoluteRect.width/2 - 90;
                 
@@ -314,7 +329,7 @@ export class EpubController {
 
                 this.setState({
                     selectionToolbarVisible: true,
-                    selectionRect: absoluteRect, // 保持原始Rect，在App.tsx中计算位置
+                    selectionRect: absoluteRect,
                     selectedText: text,
                     selectedSentence: sentence,
                     selectedElementId: elementId
@@ -322,7 +337,7 @@ export class EpubController {
             }
         });
 
-        this.rendition.display();
+        // 初始应用设置，确保主题和方向变量已更新，供 hook 使用
         this.applySettings();
         this.setLayoutMode(this.settings.layoutMode);
     }
@@ -331,8 +346,25 @@ export class EpubController {
         this.settings.layoutMode = mode;
         this.saveSettings();
         if (this.rendition) {
-            this.rendition.spread(mode === 'single' ? 'none' : 'auto');
+            try {
+                this.rendition.spread(mode === 'single' ? 'none' : 'auto');
+            } catch (e) {
+                console.warn("Spread mode set failed", e);
+            }
         }
+    }
+
+    // 获取当前阅读进度百分比 (0-1)
+    public getCurrentPercentage(): number {
+        if (!this.rendition || !this.book) return 0;
+        const currentLocation = this.rendition.currentLocation();
+        if (currentLocation && currentLocation.start) {
+             // 优先使用 locations API
+             if (this.book.locations.length() > 0) {
+                 return this.book.locations.percentageFromCfi(currentLocation.start.cfi);
+             }
+        }
+        return 0;
     }
 
     public setDirection(direction: 'horizontal' | 'vertical') {
@@ -340,34 +372,37 @@ export class EpubController {
         this.saveSettings();
         
         if (this.rendition) {
-            // 使用直接 DOM 操作而非 addStylesheetRules，避免 replaceCss 错误
             const contents = this.rendition.getContents();
-            contents.forEach((c: any) => {
-                const doc = c.document;
-                if (!doc) return;
+            if (contents && contents.length > 0) {
+                contents.forEach((c: any) => {
+                    const doc = c.document;
+                    if (!doc) return;
 
-                let style = doc.getElementById('epub-reader-direction-style');
-                if (!style) {
-                    style = doc.createElement('style');
-                    style.id = 'epub-reader-direction-style';
-                    doc.head.appendChild(style);
-                }
-
-                style.innerHTML = `
-                    html, body { 
-                        writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
-                        -webkit-writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
+                    let style = doc.getElementById('epub-reader-direction-style');
+                    if (!style) {
+                        style = doc.createElement('style');
+                        style.id = 'epub-reader-direction-style';
+                        doc.head.appendChild(style);
                     }
-                `;
-            });
 
-            // 安全调用 resize
-            try {
-                if (typeof this.rendition.resize === 'function') {
-                    this.rendition.resize();
+                    style.innerHTML = `
+                        html, body { 
+                            writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
+                            -webkit-writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
+                        }
+                    `;
+                });
+
+                // 只有当有内容时才调用 resize
+                try {
+                    if (typeof this.rendition.resize === 'function') {
+                        requestAnimationFrame(() => {
+                            try { this.rendition.resize(); } catch(e) {}
+                        });
+                    }
+                } catch (e) {
+                    console.warn("Rendition resize failed:", e);
                 }
-            } catch (e) {
-                console.warn("Rendition resize failed:", e);
             }
         }
     }
@@ -376,7 +411,9 @@ export class EpubController {
         this.settings.pageDirection = dir;
         this.saveSettings();
         if (this.rendition) {
-            this.rendition.direction(dir);
+            try {
+                this.rendition.direction(dir);
+            } catch(e) { console.warn("Set direction failed", e); }
         }
     }
 
@@ -386,7 +423,6 @@ export class EpubController {
         if (location && location.start) {
             let label = `Page ${location.start.displayed.page}`;
             
-            // 只有当音频正在播放时，才记录音频状态
             const shouldRecordAudio = this.state.isAudioPlaying && this.currentAudioFile;
             
             const newBookmark: Bookmark = {
@@ -394,7 +430,6 @@ export class EpubController {
                 cfi: location.start.cfi,
                 label: label + ` (${new Date().toLocaleTimeString()})`,
                 createdAt: Date.now(),
-                // 记录音频状态 (仅当播放时)
                 audioSrc: shouldRecordAudio ? this.currentAudioFile! : undefined,
                 audioTime: shouldRecordAudio ? this.audioPlayer.currentTime : undefined
             };
@@ -414,19 +449,16 @@ export class EpubController {
     public async restoreBookmark(bookmark: Bookmark) {
         if (!this.rendition) return;
         
-        await this.rendition.display(bookmark.cfi);
+        await this.display(bookmark.cfi);
         
-        // 恢复音频逻辑优化
         if (bookmark.audioSrc && this.state.hasAudio) {
-            // 如果书签有音频，跳转并暂停
-            await this.playAudioFile(bookmark.audioSrc, false); // false = do not play
+            await this.playAudioFile(bookmark.audioSrc, false);
             if (bookmark.audioTime !== undefined) {
                 this.seekAudio(bookmark.audioTime);
                 this.audioPlayer.pause();
                 this.setState({ isAudioPlaying: false });
             }
         } else {
-            // 如果书签没有音频，暂停当前播放器（如果在播放）
             if (this.state.isAudioPlaying) {
                 this.audioPlayer.pause();
                 this.setState({ isAudioPlaying: false });
@@ -443,14 +475,12 @@ export class EpubController {
         const fragment = this.mediaOverlayData.find(f => f.textSrc.endsWith('#' + elementId));
         
         if (fragment) {
-            // 同步跳转文字
             if (this.rendition) {
-                this.rendition.display(fragment.textSrc).then(() => {
+                this.display(fragment.textSrc).then(() => {
                     this.highlightElement(elementId);
                 });
             }
 
-            // 音频切换和跳转
             const playAndSeek = () => {
                 this.seekAudio(this.parseTime(fragment.clipBegin));
                 if (!this.state.isAudioPlaying) {
@@ -485,13 +515,11 @@ export class EpubController {
     public applySettings() {
         if (!this.rendition) return;
         
-        this.rendition.themes.fontSize(this.getFontSizeValue(this.settings.fontSize));
+        this.setFontSize(this.settings.fontSize);
         
-        // 强制应用主题逻辑
         const themeToApply = this.settings.darkMode ? 'dark' : this.settings.theme;
         this.updateThemeColors(themeToApply);
         
-        // 应用方向
         this.setDirection(this.settings.direction);
         this.setPageDirection(this.settings.pageDirection);
     }
@@ -499,8 +527,12 @@ export class EpubController {
     public setFontSize(size: string) {
         this.settings.fontSize = size as any;
         this.saveSettings();
-        if (this.rendition) {
-            this.rendition.themes.fontSize(this.getFontSizeValue(size));
+        if (this.rendition && this.rendition.themes) {
+            try {
+                this.rendition.themes.fontSize(this.getFontSizeValue(size));
+            } catch (e) {
+                console.warn("Set font size failed:", e);
+            }
         }
     }
 
@@ -525,7 +557,6 @@ export class EpubController {
         }
     }
     
-    // 统一处理主题颜色，防止残留
     private updateThemeColors(theme: string) {
         let bgColor = '#fff';
         let txtColor = '#333';
@@ -536,19 +567,18 @@ export class EpubController {
         } else if (theme === 'sepia') {
             bgColor = '#f6f1d1';
             txtColor = '#5f4b32';
-        } else { // light
-            bgColor = '#f3f4f6'; // app bg
+        } else {
+            bgColor = '#f3f4f6';
             txtColor = '#333';
         }
 
-        // 设置 App Body 背景
         document.body.style.backgroundColor = bgColor;
 
-        if (this.rendition) {
-            // EPub.js 主题切换
-            this.rendition.themes.select(theme);
+        if (this.rendition && this.rendition.themes) {
+            try {
+                this.rendition.themes.select(theme);
+            } catch (e) { console.warn("Theme selection failed", e); }
             
-            // 强力清除 iframe 内部的样式残留
             const contents = this.rendition.getContents();
             contents.forEach((c: any) => {
                 const doc = c.document;
@@ -558,7 +588,6 @@ export class EpubController {
                 doc.body.style.backgroundColor = iframeBodyBg;
                 doc.body.style.color = txtColor;
                 
-                // 确保样式被应用
                 doc.body.style.cssText += `;background-color: ${iframeBodyBg} !important; color: ${txtColor} !important;`;
             });
         }
@@ -574,20 +603,32 @@ export class EpubController {
     }
 
     public prevPage() {
-        this.rendition?.prev();
+        if (this.state.isLoading) return; // 阻止加载中翻页
+        if (this.rendition) {
+            try { this.rendition.prev(); } catch(e) {}
+        }
     }
 
     public nextPage() {
-        this.rendition?.next();
+        if (this.state.isLoading) return; // 阻止加载中翻页
+        if (this.rendition) {
+            try { this.rendition.next(); } catch(e) {}
+        }
     }
 
-    public display(target: string) {
-        this.rendition?.display(target);
+    public async display(target?: string) {
+        if (this.rendition) {
+            try {
+                await this.rendition.display(target);
+            } catch(e) {
+                console.warn("Display failed", e);
+            }
+        }
     }
 
+    // ... (rest of audio logic remains same) ...
     public highlightSelection() {
         if(!this.rendition) return;
-        // 简化高亮实现
         const selection = this.rendition.getContents()[0]?.window.getSelection();
         if(selection && selection.rangeCount > 0) {
             const range = selection.getRangeAt(0);
@@ -619,6 +660,10 @@ export class EpubController {
         });
         
         this.audioPlayer.addEventListener('error', (e) => {
+            if (!this.audioPlayer.src || this.audioPlayer.src === window.location.href || this.audioPlayer.src.endsWith('/')) {
+                return;
+            }
+            
             console.error('Audio error event:', e);
             if (this.audioPlayer.error) {
                 console.error('Audio error code:', this.audioPlayer.error.code);
@@ -689,18 +734,14 @@ export class EpubController {
         if (!frags || frags.length === 0) return;
 
         const time = this.audioPlayer.currentTime;
-        // 查找当前或刚刚结束的句子
-        // 我们查找 start <= time 的最后一个片段
         let idx = -1;
         
-        // 1. 查找当前正在播放的片段
         idx = frags.findIndex(f => {
             const s = this.parseTime(f.clipBegin);
             const e = this.parseTime(f.clipEnd);
             return time >= s && time < e;
         });
 
-        // 2. 如果没在片段中，查找在此时间点之前开始的最后一个片段
         if (idx === -1) {
              for (let i = frags.length - 1; i >= 0; i--) {
                  if (this.parseTime(frags[i].clipBegin) < time) {
@@ -711,23 +752,18 @@ export class EpubController {
         }
         
         if (idx > 0) {
-             // 跳转到上一句
              this.seekAudio(this.parseTime(frags[idx - 1].clipBegin));
         } else if (frags.length > 0) {
-             // 如果已经是第一句或之前，跳到第一句开始
              this.seekAudio(this.parseTime(frags[0].clipBegin));
         }
     }
 
-    // 切换到下一句
     public playNextSentence() {
         if (!this.currentAudioFile) return;
         const frags = this.audioGroups.get(this.currentAudioFile);
         if (!frags || frags.length === 0) return;
 
         const time = this.audioPlayer.currentTime;
-        
-        // 查找第一个开始时间大于当前时间（加一点缓冲）的片段
         const next = frags.find(f => this.parseTime(f.clipBegin) > time + 0.2);
         
         if (next) {
@@ -909,7 +945,7 @@ export class EpubController {
             if (id) {
                 this.clearAudioHighlight();
                 // 关键修复：确保先跳转并等待页面加载完成
-                await this.rendition.display(current.textSrc);
+                await this.display(current.textSrc);
                 this.highlightElement(id);
             }
         }
@@ -924,7 +960,6 @@ export class EpubController {
             const el = c.document.getElementById(id);
             if (el) {
                 el.classList.add('audio-highlight');
-                // 强制应用样式以防 css 不生效
                 el.style.backgroundColor = 'rgba(255, 255, 0, 0.4)';
                 el.style.transition = 'background-color 0.3s';
                 el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -933,7 +968,6 @@ export class EpubController {
         }
         
         if (!found) {
-            // 如果没找到，可能是刚翻页 DOM 还没准备好，稍后重试
             setTimeout(() => this.highlightElement(id), 200);
         }
     }
@@ -967,7 +1001,6 @@ export class EpubController {
         const duration = (end - start) * 1000; // ms
         if (duration <= 0) throw new Error("Invalid duration");
 
-        // 1. 初始化 AudioContext (如果需要)
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         }
@@ -975,28 +1008,20 @@ export class EpubController {
             await this.audioContext.resume();
         }
 
-        // 2. 初始化源节点 (单例模式，避免 createMediaElementSource 重复调用报错)
         if (!this.mediaElementSource) {
             try {
                 this.mediaElementSource = this.audioContext.createMediaElementSource(this.audioPlayer);
-                // 默认连接到输出设备，保证正常播放有声音
                 this.mediaElementSource.connect(this.audioContext.destination);
             } catch (e) {
                 console.error("Source creation failed, possibly due to existing context", e);
-                // 如果创建失败，可能需要重置 context 或做其他处理
-                // 但通常单例模式能避免此问题
             }
         }
         
-        // 确保有 source 才能继续
         if (!this.mediaElementSource) throw new Error("Audio source unavailable");
 
-        // 3. 创建录制流目的地
         const dest = this.audioContext.createMediaStreamDestination();
         this.mediaElementSource.connect(dest);
 
-        // 4. 选择录制格式
-        // 优先使用 WebM (Chrome/Android), Safari 可能需要 fallback
         let mimeType = "audio/webm;codecs=opus";
         let extension = "webm";
         if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -1021,7 +1046,6 @@ export class EpubController {
         const chunks: Blob[] = [];
         
         return new Promise((resolve, reject) => {
-            // 安全超时，防止永远不返回导致界面卡死
             const timeoutId = setTimeout(() => {
                 cleanup();
                 reject(new Error("Recording timeout"));
@@ -1058,13 +1082,10 @@ export class EpubController {
                 reject(e);
             };
 
-            // 5. 跳转并播放
             this.audioPlayer.currentTime = start;
             this.audioPlayer.play().then(() => {
                 try {
                     recorder.start();
-                    
-                    // 定时停止
                     setTimeout(() => {
                         if (recorder.state === 'recording') {
                             recorder.stop();
@@ -1081,8 +1102,6 @@ export class EpubController {
             });
         });
     }
-
-    // --- End Audio Processing ---
 
     public async lookupWord(word: string) {
         if (!word) return;
@@ -1139,7 +1158,6 @@ export class EpubController {
     public async addToAnki(word: string, meaning: string, sentence: string) {
         const { deck, model, wordField, meaningField, sentenceField, audioField, tagsField } = this.ankiSettings;
         
-        // 1. 验证：至少需要配置并选中一个字段
         if (!deck || !model) throw new Error(this.t('ankiFieldsConfigError'));
         if (!wordField && !meaningField && !sentenceField && !audioField) {
             throw new Error(this.t('ankiFieldsConfigError'));
@@ -1162,15 +1180,12 @@ export class EpubController {
             tags: tagsField.split(',').map(t => t.trim())
         };
 
-        // 3. Audio Processing: Play and Record segment
         if (audioField && this.currentAudioFile) {
             let fragment = null;
-            // 优先匹配当前高亮的ID
             if (this.state.selectedElementId) {
                 fragment = this.mediaOverlayData.find(f => f.textSrc.endsWith('#' + this.state.selectedElementId));
             }
             
-            // 如果没有 ID，尝试根据播放进度和当前文件匹配
             if (!fragment && this.state.isAudioPlaying) {
                  const frags = this.audioGroups.get(this.currentAudioFile);
                  const time = this.audioPlayer.currentTime;
@@ -1183,7 +1198,6 @@ export class EpubController {
                  }
             }
 
-            // 如果找到了片段信息，进行录制
             if (fragment && fragment.audioSrc === this.currentAudioFile) {
                  try {
                      const start = this.parseTime(fragment.clipBegin);
@@ -1192,7 +1206,6 @@ export class EpubController {
 
                      if (duration > 0) {
                          console.log(`Recording audio segment: ${start} -> ${end}`);
-                         // 使用录制替代解码，避免卡顿
                          const { base64, extension } = await this.captureAudioSegment(start, end);
                          const filename = `anki_${new Date().getTime()}.${extension}`;
                          note.audio = [{
@@ -1204,7 +1217,6 @@ export class EpubController {
                      }
                  } catch (e) {
                      console.error("Audio recording failed", e);
-                     // 即使录制失败，也继续添加卡片（不含音频）
                  }
             }
         }

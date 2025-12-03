@@ -5,6 +5,7 @@ export interface Book {
 
 export interface BookProgress {
     cfi: string;
+    percentage?: number; // 0-1, reading progress
     audioSrc?: string;
     audioTime?: number;
     timestamp: number;
