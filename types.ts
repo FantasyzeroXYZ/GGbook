@@ -1,5 +1,3 @@
-
-
 export interface Book {
     title: string;
     author: string;
@@ -58,6 +56,7 @@ export interface AppSettings {
     theme: 'light' | 'dark' | 'sepia';
     layoutMode: 'single' | 'double'; // New: Single or Double page
     direction: 'horizontal' | 'vertical';
+    pageDirection: 'ltr' | 'rtl'; // New: Page turn direction
     offlineMode: boolean;
     syncProgress: boolean;
     darkMode: boolean;
@@ -115,6 +114,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: 'light',
     layoutMode: 'single',
     direction: 'horizontal',
+    pageDirection: 'ltr', // Default to Left-to-Right
     offlineMode: false,
     syncProgress: true,
     darkMode: false,

@@ -99,8 +99,16 @@ export default function App() {
     const handleKey = (e: KeyboardEvent) => {
         if (view !== 'reader') return;
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-        if (e.key === 'ArrowLeft') c.prevPage();
-        if (e.key === 'ArrowRight') c.nextPage();
+        
+        // Handle RTL page direction for arrow keys
+        if (c.settings.pageDirection === 'rtl') {
+            if (e.key === 'ArrowLeft') c.nextPage();
+            if (e.key === 'ArrowRight') c.prevPage();
+        } else {
+            if (e.key === 'ArrowLeft') c.prevPage();
+            if (e.key === 'ArrowRight') c.nextPage();
+        }
+        
         if (e.key === ' ') { e.preventDefault(); c.toggleAudio(); }
     };
 
@@ -110,7 +118,7 @@ export default function App() {
         c.stopAudio();
         window.removeEventListener('keydown', handleKey);
     };
-  }, []);
+  }, [view]); // Add view dependency to ensure listener is current
 
   useEffect(() => {
       if (view !== 'reader' || !currentBookId) return;
@@ -155,9 +163,11 @@ export default function App() {
   const updateSetting = (key: keyof AppSettings, val: any) => {
       setTempSettings(prev => ({ ...prev, [key]: val }));
       if (controller.current) {
+          // 直接更新 controller 中的设置
           (controller.current.settings as any)[key] = val;
           controller.current.saveSettings();
           
+          // 触发特定的更新逻辑
           if (key === 'darkMode') {
              if (val) document.body.classList.add('dark');
              else document.body.classList.remove('dark');
@@ -173,6 +183,8 @@ export default function App() {
               controller.current.setLayoutMode(val);
           } else if (key === 'direction') {
               controller.current.setDirection(val);
+          } else if (key === 'pageDirection') {
+              controller.current.setPageDirection(val);
           }
       }
   };
@@ -471,10 +483,12 @@ export default function App() {
                {state.currentBook && (
                    <>
                        {/* 缩小触发范围：将 w-16 改为 w-8 */}
-                       <div className="absolute top-0 bottom-0 left-0 w-8 z-20 cursor-pointer flex items-center justify-start pl-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.prevPage()}>
+                       <div className="absolute top-0 bottom-0 left-0 w-8 z-20 cursor-pointer flex items-center justify-start pl-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" 
+                            onClick={() => tempSettings.pageDirection === 'rtl' ? controller.current?.nextPage() : controller.current?.prevPage()}>
                            <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity transform scale-75"><Icon name="chevron-left"/></div>
                        </div>
-                       <div className="absolute top-0 bottom-0 right-0 w-8 z-20 cursor-pointer flex items-center justify-end pr-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" onClick={() => controller.current?.nextPage()}>
+                       <div className="absolute top-0 bottom-0 right-0 w-8 z-20 cursor-pointer flex items-center justify-end pr-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" 
+                            onClick={() => tempSettings.pageDirection === 'rtl' ? controller.current?.prevPage() : controller.current?.nextPage()}>
                            <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity transform scale-75"><Icon name="chevron-right"/></div>
                        </div>
                    </>
@@ -514,6 +528,13 @@ export default function App() {
                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.direction} onChange={(e) => updateSetting('direction', e.target.value)}>
                                    <option value="horizontal">Horizontal (横排)</option>
                                    <option value="vertical">Vertical (竖排 - 日语)</option>
+                               </select>
+                           </div>
+                           <div>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('pageDirection')}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.pageDirection} onChange={(e) => updateSetting('pageDirection', e.target.value)}>
+                                   <option value="ltr">{t('ltr')}</option>
+                                   <option value="rtl">{t('rtl')}</option>
                                </select>
                            </div>
                            <div>
@@ -646,7 +667,7 @@ export default function App() {
 
       {/* 底部 / 音频播放器 (仅当有音频时显示) */}
       {state.hasAudio && (
-          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
+          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 min-h-[5rem] shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
                <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full overflow-hidden">
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward"/></button>

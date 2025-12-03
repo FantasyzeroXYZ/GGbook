@@ -52,7 +52,10 @@ export const translations = {
         small: "Small",
         medium: "Medium",
         large: "Large",
-        xlarge: "Extra Large"
+        xlarge: "Extra Large",
+        pageDirection: "Page Direction",
+        ltr: "Left to Right",
+        rtl: "Right to Left"
     },
     zh: {
         tableOfContents: "目录",
@@ -107,7 +110,10 @@ export const translations = {
         small: "小",
         medium: "中",
         large: "大",
-        xlarge: "特大"
+        xlarge: "特大",
+        pageDirection: "翻页方向",
+        ltr: "从左向右",
+        rtl: "从右向左"
     }
 };
 

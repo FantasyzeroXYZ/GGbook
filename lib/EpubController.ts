@@ -1,4 +1,3 @@
-
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from '../types';
 import { translations, Language } from './locales';
 
@@ -39,6 +38,7 @@ export class EpubController {
         if (!this.settings.layoutMode) this.settings.layoutMode = 'single';
         if (!this.settings.theme) this.settings.theme = 'light';
         if (!this.settings.direction) this.settings.direction = 'horizontal';
+        if (!this.settings.pageDirection) this.settings.pageDirection = 'ltr';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
@@ -203,7 +203,8 @@ export class EpubController {
         // 注入全局样式，禁止默认长按菜单和工具栏，但允许选词和 Yomitan
         this.rendition.hooks.content.register((contents: any) => {
              const style = contents.document.createElement('style');
-             style.innerHTML = `
+             style.id = 'epub-reader-custom-style';
+             let css = `
                 html, body { 
                     -webkit-touch-callout: none !important; /* iOS 禁止默认菜单 */
                     -webkit-user-select: text !important; /* 允许选词 */
@@ -223,18 +224,27 @@ export class EpubController {
                     background: rgba(59, 130, 246, 0.3); 
                 }
              `;
-             contents.document.head.appendChild(style);
              
-             // 应用竖排/横排样式
+             // 根据当前设置应用横竖排，使用 !important 强制覆盖
              if (this.settings.direction === 'vertical') {
-                 contents.addStylesheetRules({
-                     'html, body': {
-                         'writing-mode': 'vertical-rl !important',
-                         '-webkit-writing-mode': 'vertical-rl !important'
-                     }
-                 });
+                 css += `
+                    html, body {
+                        writing-mode: vertical-rl !important;
+                        -webkit-writing-mode: vertical-rl !important;
+                    }
+                 `;
+             } else {
+                 css += `
+                    html, body {
+                        writing-mode: horizontal-tb !important;
+                        -webkit-writing-mode: horizontal-tb !important;
+                    }
+                 `;
              }
 
+             style.innerHTML = css;
+             contents.document.head.appendChild(style);
+             
              // 关键：阻止右键菜单，通常可以阻止默认的“复制/分享”弹出框
              contents.document.addEventListener('contextmenu', (e: Event) => {
                  e.preventDefault();
@@ -328,15 +338,45 @@ export class EpubController {
     public setDirection(direction: 'horizontal' | 'vertical') {
         this.settings.direction = direction;
         this.saveSettings();
+        
         if (this.rendition) {
-            this.rendition.getContents().forEach((c: any) => {
-                 c.addStylesheetRules({
-                     'html, body': {
-                         'writing-mode': direction === 'vertical' ? 'vertical-rl !important' : 'horizontal-tb !important',
-                         '-webkit-writing-mode': direction === 'vertical' ? 'vertical-rl !important' : 'horizontal-tb !important'
-                     }
-                 });
+            // 使用直接 DOM 操作而非 addStylesheetRules，避免 replaceCss 错误
+            const contents = this.rendition.getContents();
+            contents.forEach((c: any) => {
+                const doc = c.document;
+                if (!doc) return;
+
+                let style = doc.getElementById('epub-reader-direction-style');
+                if (!style) {
+                    style = doc.createElement('style');
+                    style.id = 'epub-reader-direction-style';
+                    doc.head.appendChild(style);
+                }
+
+                style.innerHTML = `
+                    html, body { 
+                        writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
+                        -webkit-writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; 
+                    }
+                `;
             });
+
+            // 安全调用 resize
+            try {
+                if (typeof this.rendition.resize === 'function') {
+                    this.rendition.resize();
+                }
+            } catch (e) {
+                console.warn("Rendition resize failed:", e);
+            }
+        }
+    }
+
+    public setPageDirection(dir: 'ltr' | 'rtl') {
+        this.settings.pageDirection = dir;
+        this.saveSettings();
+        if (this.rendition) {
+            this.rendition.direction(dir);
         }
     }
 
@@ -450,6 +490,10 @@ export class EpubController {
         // 强制应用主题逻辑
         const themeToApply = this.settings.darkMode ? 'dark' : this.settings.theme;
         this.updateThemeColors(themeToApply);
+        
+        // 应用方向
+        this.setDirection(this.settings.direction);
+        this.setPageDirection(this.settings.pageDirection);
     }
 
     public setFontSize(size: string) {
@@ -575,7 +619,11 @@ export class EpubController {
         });
         
         this.audioPlayer.addEventListener('error', (e) => {
-            console.error('Audio error', e);
+            console.error('Audio error event:', e);
+            if (this.audioPlayer.error) {
+                console.error('Audio error code:', this.audioPlayer.error.code);
+                console.error('Audio error message:', this.audioPlayer.error.message);
+            }
             this.setState({ isAudioPlaying: false });
         });
     }
