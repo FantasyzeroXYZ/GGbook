@@ -40,6 +40,7 @@ export default function App() {
     selectionToolbarVisible: false,
     selectionRect: null,
     selectedText: '',
+    selectedSentence: '',
     selectedElementId: null,
     dictionaryModalVisible: false,
     dictionaryData: null,
@@ -170,6 +171,8 @@ export default function App() {
               controller.current.setFontSize(val);
           } else if (key === 'layoutMode') {
               controller.current.setLayoutMode(val);
+          } else if (key === 'direction') {
+              controller.current.setDirection(val);
           }
       }
   };
@@ -245,10 +248,8 @@ export default function App() {
 
   const deleteBook = async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      if (confirm('确定要删除这本书吗？')) {
-          await db.deleteBook(id);
-          await refreshLibrary();
-      }
+      await db.deleteBook(id);
+      await refreshLibrary();
   };
 
   const exitReader = () => {
@@ -506,6 +507,13 @@ export default function App() {
                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
                                    <option value="single">{t('singlePage')}</option>
                                    <option value="double">{t('doublePage')}</option>
+                               </select>
+                           </div>
+                           <div>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">Direction</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.direction} onChange={(e) => updateSetting('direction', e.target.value)}>
+                                   <option value="horizontal">Horizontal (横排)</option>
+                                   <option value="vertical">Vertical (竖排 - 日语)</option>
                                </select>
                            </div>
                            <div>

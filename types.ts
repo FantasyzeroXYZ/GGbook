@@ -1,4 +1,5 @@
 
+
 export interface Book {
     title: string;
     author: string;
@@ -56,6 +57,7 @@ export interface AppSettings {
     fontSize: 'small' | 'medium' | 'large' | 'xlarge';
     theme: 'light' | 'dark' | 'sepia';
     layoutMode: 'single' | 'double'; // New: Single or Double page
+    direction: 'horizontal' | 'vertical';
     offlineMode: boolean;
     syncProgress: boolean;
     darkMode: boolean;
@@ -112,6 +114,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fontSize: 'medium',
     theme: 'light',
     layoutMode: 'single',
+    direction: 'horizontal',
     offlineMode: false,
     syncProgress: true,
     darkMode: false,

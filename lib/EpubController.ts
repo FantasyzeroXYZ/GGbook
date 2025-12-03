@@ -1,3 +1,4 @@
+
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from '../types';
 import { translations, Language } from './locales';
 
@@ -37,6 +38,7 @@ export class EpubController {
         if (!this.settings.language) this.settings.language = 'zh';
         if (!this.settings.layoutMode) this.settings.layoutMode = 'single';
         if (!this.settings.theme) this.settings.theme = 'light';
+        if (!this.settings.direction) this.settings.direction = 'horizontal';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
@@ -222,6 +224,16 @@ export class EpubController {
                 }
              `;
              contents.document.head.appendChild(style);
+             
+             // 应用竖排/横排样式
+             if (this.settings.direction === 'vertical') {
+                 contents.addStylesheetRules({
+                     'html, body': {
+                         'writing-mode': 'vertical-rl !important',
+                         '-webkit-writing-mode': 'vertical-rl !important'
+                     }
+                 });
+             }
 
              // 关键：阻止右键菜单，通常可以阻止默认的“复制/分享”弹出框
              contents.document.addEventListener('contextmenu', (e: Event) => {
@@ -310,6 +322,21 @@ export class EpubController {
         this.saveSettings();
         if (this.rendition) {
             this.rendition.spread(mode === 'single' ? 'none' : 'auto');
+        }
+    }
+
+    public setDirection(direction: 'horizontal' | 'vertical') {
+        this.settings.direction = direction;
+        this.saveSettings();
+        if (this.rendition) {
+            this.rendition.getContents().forEach((c: any) => {
+                 c.addStylesheetRules({
+                     'html, body': {
+                         'writing-mode': direction === 'vertical' ? 'vertical-rl !important' : 'horizontal-tb !important',
+                         '-webkit-writing-mode': direction === 'vertical' ? 'vertical-rl !important' : 'horizontal-tb !important'
+                     }
+                 });
+            });
         }
     }
 
