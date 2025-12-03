@@ -417,8 +417,16 @@ export default function App() {
       </div>
 
       <div className="flex-1 relative overflow-hidden flex">
+          {/* 覆盖层：点击空白处关闭侧边栏/设置栏 */}
+          {(state.isSidebarOpen || state.isSettingsOpen) && (
+              <div 
+                  className="absolute inset-0 z-40 bg-black/20"
+                  onClick={() => setState(s => ({ ...s, isSidebarOpen: false, isSettingsOpen: false }))}
+              ></div>
+          )}
+
           {/* 侧边栏 (目录/书签) */}
-          <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
+          <div className={`fixed inset-y-0 left-0 w-72 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
                <div className="flex border-b dark:border-gray-700">
                    <button 
                        className={`flex-1 p-3 font-bold ${sidebarTab === 'toc' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
@@ -473,7 +481,7 @@ export default function App() {
           </div>
 
           {/* 设置侧边栏 - 使用 details/summary 实现默认折叠 */}
-          <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-40 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t('settings')}</span>
                    <button onClick={() => setState(s => ({ ...s, isSettingsOpen: false }))}><Icon name="times"/></button>
@@ -633,11 +641,11 @@ export default function App() {
           <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-30 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
                <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full overflow-hidden">
                    <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(-10)}><Icon name="backward"/></button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward"/></button>
                    <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
                        <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
                    </button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.seekAudioBy(10)}><Icon name="forward"/></button>
+                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playNextSentence()}><Icon name="step-forward"/></button>
                    
                    <div className="flex flex-col flex-1 min-w-0 mx-1 md:mx-2 overflow-hidden">
                        <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1 w-full">{state.audioTitle || 'No Audio'}</span>

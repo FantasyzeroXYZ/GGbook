@@ -211,6 +211,11 @@ export class EpubController {
                 iframe {
                     pointer-events: auto !important;
                 }
+                /* 关键：防止 Yomitan 选中注音假名，避免干扰取词 */
+                rt {
+                    user-select: none !important;
+                    -webkit-user-select: none !important;
+                }
                 /* 尝试隐藏部分浏览器的默认弹窗，虽然不一定所有浏览器生效 */
                 ::selection {
                     background: rgba(59, 130, 246, 0.3); 
@@ -599,6 +604,59 @@ export class EpubController {
     public seekAudioBy(seconds: number) {
         if (this.audioPlayer.src) {
             this.audioPlayer.currentTime = Math.max(0, Math.min(this.audioPlayer.duration, this.audioPlayer.currentTime + seconds));
+        }
+    }
+    
+    // 切换到上一句
+    public playPrevSentence() {
+        if (!this.currentAudioFile) return;
+        const frags = this.audioGroups.get(this.currentAudioFile);
+        if (!frags || frags.length === 0) return;
+
+        const time = this.audioPlayer.currentTime;
+        // 查找当前或刚刚结束的句子
+        // 我们查找 start <= time 的最后一个片段
+        let idx = -1;
+        
+        // 1. 查找当前正在播放的片段
+        idx = frags.findIndex(f => {
+            const s = this.parseTime(f.clipBegin);
+            const e = this.parseTime(f.clipEnd);
+            return time >= s && time < e;
+        });
+
+        // 2. 如果没在片段中，查找在此时间点之前开始的最后一个片段
+        if (idx === -1) {
+             for (let i = frags.length - 1; i >= 0; i--) {
+                 if (this.parseTime(frags[i].clipBegin) < time) {
+                     idx = i;
+                     break;
+                 }
+             }
+        }
+        
+        if (idx > 0) {
+             // 跳转到上一句
+             this.seekAudio(this.parseTime(frags[idx - 1].clipBegin));
+        } else if (frags.length > 0) {
+             // 如果已经是第一句或之前，跳到第一句开始
+             this.seekAudio(this.parseTime(frags[0].clipBegin));
+        }
+    }
+
+    // 切换到下一句
+    public playNextSentence() {
+        if (!this.currentAudioFile) return;
+        const frags = this.audioGroups.get(this.currentAudioFile);
+        if (!frags || frags.length === 0) return;
+
+        const time = this.audioPlayer.currentTime;
+        
+        // 查找第一个开始时间大于当前时间（加一点缓冲）的片段
+        const next = frags.find(f => this.parseTime(f.clipBegin) > time + 0.2);
+        
+        if (next) {
+            this.seekAudio(this.parseTime(next.clipBegin));
         }
     }
 
