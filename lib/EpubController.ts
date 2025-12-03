@@ -21,15 +21,12 @@ export class EpubController {
     private currentAudioFile: string | null = null;
     private currentAudioIndex: number = -1;
 
-    // 音频缓存优化
-    private cachedAudioSrc: string | null = null;
-    private cachedAudioBuffer: AudioBuffer | null = null;
-    private isDecoding: boolean = false;
+    // 音频处理 (MediaRecorder 方案)
+    private mediaElementSource: MediaElementAudioSourceNode | null = null;
+    private audioContext: AudioContext | null = null;
     
     // 引用
     private containerRef: HTMLElement | null = null;
-    // Audio Context for processing
-    private audioContext: AudioContext | null = null;
 
     constructor(initialState: ReaderState, updateState: StateUpdater) {
         this.state = initialState;
@@ -45,6 +42,9 @@ export class EpubController {
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
 
         this.audioPlayer = new Audio();
+        // 设置跨域属性，虽然本地 Blob 还是需要的，防止录制时出现 tainted canvas/media 报错
+        this.audioPlayer.crossOrigin = "anonymous";
+        
         this.bindAudioEvents();
         this.setVolume(this.settings.audioVolume / 100);
         
@@ -96,13 +96,10 @@ export class EpubController {
         this.currentAudioFile = null;
         this.currentAudioIndex = -1;
         
-        // 清理缓存
-        this.cachedAudioBuffer = null;
-        this.cachedAudioSrc = null;
-        
         if (this.audioContext) {
             this.audioContext.close();
             this.audioContext = null;
+            this.mediaElementSource = null;
         }
 
         this.setState({
@@ -201,7 +198,7 @@ export class EpubController {
             } 
         });
 
-        // 注入全局样式，禁止默认长按菜单和工具栏
+        // 注入全局样式，禁止默认长按菜单和工具栏，但允许选词和 Yomitan
         this.rendition.hooks.content.register((contents: any) => {
              const style = contents.document.createElement('style');
              style.innerHTML = `
@@ -209,6 +206,15 @@ export class EpubController {
                     -webkit-touch-callout: none !important; /* iOS 禁止默认菜单 */
                     -webkit-user-select: text !important; /* 允许选词 */
                     user-select: text !important;
+                    pointer-events: auto !important; /* 确保 Yomitan 可以获取事件 */
+                }
+                iframe {
+                    pointer-events: auto !important;
+                }
+                /* 关键：防止 Yomitan 选中注音假名，避免干扰取词 */
+                rt {
+                    user-select: none !important;
+                    -webkit-user-select: none !important;
                 }
                 /* 尝试隐藏部分浏览器的默认弹窗，虽然不一定所有浏览器生效 */
                 ::selection {
@@ -600,6 +606,59 @@ export class EpubController {
             this.audioPlayer.currentTime = Math.max(0, Math.min(this.audioPlayer.duration, this.audioPlayer.currentTime + seconds));
         }
     }
+    
+    // 切换到上一句
+    public playPrevSentence() {
+        if (!this.currentAudioFile) return;
+        const frags = this.audioGroups.get(this.currentAudioFile);
+        if (!frags || frags.length === 0) return;
+
+        const time = this.audioPlayer.currentTime;
+        // 查找当前或刚刚结束的句子
+        // 我们查找 start <= time 的最后一个片段
+        let idx = -1;
+        
+        // 1. 查找当前正在播放的片段
+        idx = frags.findIndex(f => {
+            const s = this.parseTime(f.clipBegin);
+            const e = this.parseTime(f.clipEnd);
+            return time >= s && time < e;
+        });
+
+        // 2. 如果没在片段中，查找在此时间点之前开始的最后一个片段
+        if (idx === -1) {
+             for (let i = frags.length - 1; i >= 0; i--) {
+                 if (this.parseTime(frags[i].clipBegin) < time) {
+                     idx = i;
+                     break;
+                 }
+             }
+        }
+        
+        if (idx > 0) {
+             // 跳转到上一句
+             this.seekAudio(this.parseTime(frags[idx - 1].clipBegin));
+        } else if (frags.length > 0) {
+             // 如果已经是第一句或之前，跳到第一句开始
+             this.seekAudio(this.parseTime(frags[0].clipBegin));
+        }
+    }
+
+    // 切换到下一句
+    public playNextSentence() {
+        if (!this.currentAudioFile) return;
+        const frags = this.audioGroups.get(this.currentAudioFile);
+        if (!frags || frags.length === 0) return;
+
+        const time = this.audioPlayer.currentTime;
+        
+        // 查找第一个开始时间大于当前时间（加一点缓冲）的片段
+        const next = frags.find(f => this.parseTime(f.clipBegin) > time + 0.2);
+        
+        if (next) {
+            this.seekAudio(this.parseTime(next.clipBegin));
+        }
+    }
 
     public setVolume(val: number) {
         this.audioPlayer.volume = Math.max(0, Math.min(1, val));
@@ -733,35 +792,6 @@ export class EpubController {
         return null;
     }
 
-    // 预热/后台解码音频，解决制卡卡顿
-    private async triggerBackgroundDecode(blobUrl: string, audioSrc: string) {
-        if (this.cachedAudioSrc === audioSrc && this.cachedAudioBuffer) return;
-        if (this.isDecoding) return;
-        
-        console.log("Triggering background audio decode for Anki...");
-        this.isDecoding = true;
-        try {
-            if (!this.audioContext) {
-                this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-            }
-            const response = await fetch(blobUrl);
-            const arrayBuffer = await response.arrayBuffer();
-            
-            this.audioContext!.decodeAudioData(arrayBuffer, (decoded) => {
-                console.log("Audio decoded successfully in background");
-                this.cachedAudioBuffer = decoded;
-                this.cachedAudioSrc = audioSrc;
-                this.isDecoding = false;
-            }, (e) => {
-                console.warn("Background decode failed", e);
-                this.isDecoding = false;
-            });
-        } catch (e) {
-            console.warn("Background fetch failed", e);
-            this.isDecoding = false;
-        }
-    }
-
     public async playAudioFile(audioPath: string, autoPlay: boolean = true) {
         try {
             this.currentAudioFile = audioPath;
@@ -770,9 +800,6 @@ export class EpubController {
                 this.audioPlayer.src = url;
                 const title = audioPath.split('/').pop() || 'Audio';
                 
-                // 触发后台解码，以便用户制卡时无需等待
-                this.triggerBackgroundDecode(url, audioPath);
-
                 if (autoPlay) {
                     this.audioPlayer.play().catch(e => console.error('Play failed', e));
                     this.setState({ isAudioPlaying: true, audioTitle: title, currentAudioFile: audioPath });
@@ -859,112 +886,125 @@ export class EpubController {
         return parseFloat(t);
     }
 
-    // --- Audio Processing for Anki ---
+    // --- Audio Processing for Anki (Real-time Play & Record) ---
 
-    private async cutAudioBlob(audioSrc: string, start: number, end: number): Promise<string> {
-        if (!audioSrc) throw new Error("No audio source");
-        
-        // 优化：重用 AudioContext
+    private async captureAudioSegment(start: number, end: number): Promise<{base64: string, extension: string}> {
+        const duration = (end - start) * 1000; // ms
+        if (duration <= 0) throw new Error("Invalid duration");
+
+        // 1. 初始化 AudioContext (如果需要)
         if (!this.audioContext) {
             this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         }
-
-        let audioBuffer: AudioBuffer;
-
-        // 优化：使用缓存或等待解码
-        if (this.cachedAudioSrc === audioSrc && this.cachedAudioBuffer) {
-             audioBuffer = this.cachedAudioBuffer;
-        } else {
-             // 如果没有缓存，必须同步等待解码
-             // 1. Get Blob URL
-             const blobUrl = await this.findAudioBlob(audioSrc);
-             if (!blobUrl) throw new Error("Audio file not found inside EPUB");
-
-             // 2. Fetch raw array buffer
-             const response = await fetch(blobUrl);
-             const arrayBuffer = await response.arrayBuffer();
-
-             // 3. Decode
-             audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-             
-             // Update Cache for next time
-             this.cachedAudioSrc = audioSrc;
-             this.cachedAudioBuffer = audioBuffer;
+        if (this.audioContext.state === 'suspended') {
+            await this.audioContext.resume();
         }
 
-        const sampleRate = audioBuffer.sampleRate;
-        const startFrame = Math.floor(start * sampleRate);
-        const endFrame = Math.floor(end * sampleRate);
-        const frameCount = endFrame - startFrame;
-
-        if (frameCount <= 0) throw new Error("Invalid duration");
-
-        // 6. Offline Render to slice
-        const offlineCtx = new OfflineAudioContext(audioBuffer.numberOfChannels, frameCount, sampleRate);
-        const source = offlineCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(offlineCtx.destination);
-        source.start(0, start); // Start playing at 'start' offset
-
-        const renderedBuffer = await offlineCtx.startRendering();
-
-        // 7. Convert AudioBuffer to WAV (Base64)
-        return this.audioBufferToWavBase64(renderedBuffer);
-    }
-
-    private audioBufferToWavBase64(buffer: AudioBuffer): string {
-        const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-        
-        const resultBuffer = new ArrayBuffer(44 + buffer.length * numChannels * 2);
-        const view = new DataView(resultBuffer);
-        
-        const writeString = (view: DataView, offset: number, string: string) => {
-            for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
-            }
-        };
-        
-        // RIFF chunk descriptor
-        writeString(view, 0, 'RIFF');
-        view.setUint32(4, 36 + buffer.length * numChannels * 2, true);
-        writeString(view, 8, 'WAVE');
-        
-        // fmt sub-chunk
-        writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true);
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * numChannels * 2, true);
-        view.setUint16(32, numChannels * 2, true);
-        view.setUint16(34, bitDepth, true);
-        
-        // data sub-chunk
-        writeString(view, 36, 'data');
-        view.setUint32(40, buffer.length * numChannels * 2, true);
-        
-        // Write PCM data
-        let offset = 44;
-        for (let i = 0; i < buffer.length; i++) {
-            for (let channel = 0; channel < numChannels; channel++) {
-                const sample = buffer.getChannelData(channel)[i];
-                // Clamp and scale to 16-bit
-                const s = Math.max(-1, Math.min(1, sample));
-                view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-                offset += 2;
+        // 2. 初始化源节点 (单例模式，避免 createMediaElementSource 重复调用报错)
+        if (!this.mediaElementSource) {
+            try {
+                this.mediaElementSource = this.audioContext.createMediaElementSource(this.audioPlayer);
+                // 默认连接到输出设备，保证正常播放有声音
+                this.mediaElementSource.connect(this.audioContext.destination);
+            } catch (e) {
+                console.error("Source creation failed, possibly due to existing context", e);
+                // 如果创建失败，可能需要重置 context 或做其他处理
+                // 但通常单例模式能避免此问题
             }
         }
         
-        const bytes = new Uint8Array(resultBuffer);
-        let binary = '';
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
+        // 确保有 source 才能继续
+        if (!this.mediaElementSource) throw new Error("Audio source unavailable");
+
+        // 3. 创建录制流目的地
+        const dest = this.audioContext.createMediaStreamDestination();
+        this.mediaElementSource.connect(dest);
+
+        // 4. 选择录制格式
+        // 优先使用 WebM (Chrome/Android), Safari 可能需要 fallback
+        let mimeType = "audio/webm;codecs=opus";
+        let extension = "webm";
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = "audio/mp4"; // Safari
+            extension = "m4a";
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+                 mimeType = ""; // Browser default
+                 extension = "webm"; // Guess
+            }
         }
-        return window.btoa(binary);
+        
+        const options = mimeType ? { mimeType } : undefined;
+        let recorder: MediaRecorder;
+        try {
+             recorder = new MediaRecorder(dest.stream, options);
+        } catch (e) {
+             console.error("MediaRecorder init failed", e);
+             this.mediaElementSource.disconnect(dest);
+             throw new Error("Recorder init failed");
+        }
+
+        const chunks: Blob[] = [];
+        
+        return new Promise((resolve, reject) => {
+            // 安全超时，防止永远不返回导致界面卡死
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error("Recording timeout"));
+            }, duration + 5000);
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                try {
+                     if (recorder.state !== 'inactive') recorder.stop();
+                } catch(e){}
+                try {
+                     this.mediaElementSource?.disconnect(dest);
+                } catch(e){}
+            };
+
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunks.push(e.data);
+            };
+            
+            recorder.onstop = async () => {
+                 cleanup();
+                 const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+                 const reader = new FileReader();
+                 reader.onloadend = () => {
+                     const base64 = (reader.result as string).split(',')[1];
+                     resolve({ base64, extension });
+                 };
+                 reader.onerror = reject;
+                 reader.readAsDataURL(blob);
+            };
+
+            recorder.onerror = (e) => {
+                cleanup();
+                reject(e);
+            };
+
+            // 5. 跳转并播放
+            this.audioPlayer.currentTime = start;
+            this.audioPlayer.play().then(() => {
+                try {
+                    recorder.start();
+                    
+                    // 定时停止
+                    setTimeout(() => {
+                        if (recorder.state === 'recording') {
+                            recorder.stop();
+                            this.audioPlayer.pause();
+                        }
+                    }, duration);
+                } catch (e) {
+                    cleanup();
+                    reject(e);
+                }
+            }).catch((e) => {
+                cleanup();
+                reject(e);
+            });
+        });
     }
 
     // --- End Audio Processing ---
@@ -1047,7 +1087,7 @@ export class EpubController {
             tags: tagsField.split(',').map(t => t.trim())
         };
 
-        // 3. Audio Processing: Slice specific sentence
+        // 3. Audio Processing: Play and Record segment
         if (audioField && this.currentAudioFile) {
             let fragment = null;
             // 优先匹配当前高亮的ID
@@ -1068,7 +1108,7 @@ export class EpubController {
                  }
             }
 
-            // 如果找到了片段信息，进行截取
+            // 如果找到了片段信息，进行录制
             if (fragment && fragment.audioSrc === this.currentAudioFile) {
                  try {
                      const start = this.parseTime(fragment.clipBegin);
@@ -1076,20 +1116,20 @@ export class EpubController {
                      const duration = end - start;
 
                      if (duration > 0) {
-                         // 在 UI 层提示正在处理
-                         console.log(`Slicing audio: ${start} -> ${end}`);
-                         // 此时如果缓存已经就绪（预热过），速度会非常快
-                         const base64Wav = await this.cutAudioBlob(fragment.audioSrc, start, end);
-                         const filename = `anki_${new Date().getTime()}.wav`;
+                         console.log(`Recording audio segment: ${start} -> ${end}`);
+                         // 使用录制替代解码，避免卡顿
+                         const { base64, extension } = await this.captureAudioSegment(start, end);
+                         const filename = `anki_${new Date().getTime()}.${extension}`;
                          note.audio = [{
                             url: "",
-                            data: base64Wav,
+                            data: base64,
                             filename: filename,
                             fields: [audioField]
                         }];
                      }
                  } catch (e) {
-                     console.error("Audio slicing failed", e);
+                     console.error("Audio recording failed", e);
+                     // 即使录制失败，也继续添加卡片（不含音频）
                  }
             }
         }
