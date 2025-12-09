@@ -272,37 +272,53 @@ export class EpubController {
                 }
                 
                 // Use window.find to locate the text range
+                // Note: window.find selects the text (blue highlight). 
+                // We will wrap it with a span and then CLEAR the selection to avoid popping up the toolbar.
                 const found = contents.window.find(sentence, false, false, true, false, false, false);
                 
                 if (found) {
                     // Create highlight span using range surround
                     const range = sel.getRangeAt(0);
-                    // Clear native blue selection visually
-                    sel.removeAllRanges(); 
-
+                    
                     const span = contents.document.createElement('span');
                     span.className = 'audio-highlight';
                     // Inline styles as backup
                     span.style.backgroundColor = 'rgba(255, 255, 0, 0.4)';
                     span.style.borderRadius = '2px';
                     span.style.boxShadow = '0 0 2px rgba(255, 255, 0, 0.8)';
+                    // IMPORTANT: Disable pointer events on TTS highlight so it doesn't interfere with clicks/selection
+                    span.style.pointerEvents = 'none'; 
                     
                     try {
                         range.surroundContents(span);
+                        // Store reference for cleanup
                         // Scroll into view
                         span.scrollIntoView({ block: 'center', behavior: 'smooth' });
                         
-                        // Restore range for next search continuity
-                        sel.addRange(range);
-                        sel.collapseToEnd(); // Collapse to end of highlight
+                        // CRITICAL: Clear native selection so the blue highlight disappears 
+                        // and doesn't trigger the "Selected" event in App.tsx
+                        sel.removeAllRanges(); 
+                        
+                        // We need to restore range position for NEXT search, but without selecting it visually.
+                        // We can just collapse to the end of our new span.
+                        const newRange = contents.document.createRange();
+                        newRange.selectNode(span);
+                        newRange.collapse(false); // Collapse to end
+                        sel.addRange(newRange);
+                        
                     } catch (surroundError) {
-                        // Fallback: re-select to show blue highlight if yellow fails
-                        sel.addRange(range);
+                        // Fallback: If surround fails (complex DOM), just keep selection but try to hide it?
+                        // Or just let it be.
+                        // sel.removeAllRanges(); // Maybe just clear it to be safe
                     }
                 } else {
-                    // Fallback search for partial
+                    // Fallback search
                     const subSentence = sentence.substring(0, 20);
                     contents.window.find(subSentence, false, false, true, false, false, false);
+                    // Clear selection here too if found
+                    if (contents.window.getSelection().rangeCount > 0) {
+                        contents.window.getSelection().removeAllRanges();
+                    }
                 }
             } catch(e) { console.warn("Highlight error", e); }
         }
@@ -337,8 +353,6 @@ export class EpubController {
             console.error("TTS Error", e);
             // Don't recursive loop on error, just stop
             if (this.isTTSActive) {
-                // Optional: try skipping to next sentence?
-                // this.playNextTTS(); 
                 this.stopAudio();
             }
         };
@@ -548,6 +562,12 @@ export class EpubController {
             const range = contents.range(cfiRange);
             const text = range.toString();
             
+            // TTS Highlight Check: If the selection is EXACTLY our highlight span, ignore it.
+            // However, native selection is usually cleared in playNextTTS.
+            // Just to be safe, if we are in TTS mode, we might want to suppress the toolbar unless explicitly selected by user.
+            // But user might want to select WHILE listening.
+            // Since we call removeAllRanges() in playNextTTS, this event shouldn't fire for TTS updates.
+            
             let elementId = null;
             let node = range.commonAncestorContainer;
             if (node.nodeType !== 1) node = node.parentNode;
@@ -706,9 +726,12 @@ export class EpubController {
                 this.ttsUtterance.onerror = null;
             }
             this.synth.cancel();
+            this.removeTTSHighlights();
             
             // Restart with selection
             this.playCurrentPageTTS(this.state.selectedText);
+            
+            // Explicitly close toolbar
             this.setState({ selectionToolbarVisible: false });
             return;
         }
