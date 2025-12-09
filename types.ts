@@ -64,6 +64,9 @@ export interface AppSettings {
     autoPlayAudio: boolean;
     syncTextHighlight: boolean;
     audioVolume: number;
+    // TTS Settings
+    ttsEnabled: boolean;
+    ttsVoiceURI: string;
 }
 
 export interface ReaderState {
@@ -87,6 +90,9 @@ export interface ReaderState {
     audioList: string[];
     showAudioList: boolean;
     currentAudioFile?: string | null;
+    
+    // TTS 状态
+    ttsVoices: SpeechSynthesisVoice[];
     
     // 词典/选词状态
     selectionToolbarVisible: boolean;
@@ -121,7 +127,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     darkMode: false,
     autoPlayAudio: true,
     syncTextHighlight: true,
-    audioVolume: 80
+    audioVolume: 80,
+    ttsEnabled: false,
+    ttsVoiceURI: ''
 };
 
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {

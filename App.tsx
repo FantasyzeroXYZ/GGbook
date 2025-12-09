@@ -37,6 +37,10 @@ export default function App() {
     audioList: [],
     showAudioList: false,
     currentAudioFile: null,
+    
+    // TTS State
+    ttsVoices: [],
+
     selectionToolbarVisible: false,
     selectionRect: null,
     selectedText: '',
@@ -134,7 +138,7 @@ export default function App() {
               const percentage = controller.current.getCurrentPercentage();
               const progress: BookProgress = {
                   cfi: state.currentCfi,
-                  percentage: percentage,
+                  percentage: percentage, // Ensure percentage is updated
                   audioSrc: state.currentAudioFile || undefined,
                   audioTime: state.audioCurrentTime,
                   timestamp: Date.now()
@@ -193,6 +197,8 @@ export default function App() {
               controller.current.setDirection(val);
           } else if (key === 'pageDirection') {
               controller.current.setPageDirection(val);
+          } else if (key === 'ttsVoiceURI') {
+              controller.current.setTTSVoice(val);
           }
       }
   };
@@ -386,15 +392,17 @@ export default function App() {
                                     <Icon name="book" className="text-2xl md:text-4xl" />
                                 )}
                             </div>
-                            <div className="p-2 flex-1 flex flex-col justify-start">
+                            <div className="p-2 flex-1 flex flex-col justify-start pb-6">
                                 <h3 className="font-bold text-[11px] md:text-base leading-tight mb-1 line-clamp-2" title={book.title}>{book.title}</h3>
                                 <p className="text-[10px] md:text-sm text-gray-500 dark:text-gray-400 truncate hidden sm:block">{book.author}</p>
                             </div>
+                            {/* 进度条显示 - 放在底部 */}
                             {book.progress && (
-                                <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-200 dark:bg-gray-700">
+                                <div className="w-full h-2 bg-gray-300 dark:bg-gray-600 mt-auto z-20 relative">
                                     <div 
                                         className="h-full bg-blue-500 transition-all duration-300" 
                                         style={{ width: `${Math.round((book.progress.percentage || 0) * 100)}%` }}
+                                        title={`Progress: ${Math.round((book.progress.percentage || 0) * 100)}%`}
                                     ></div>
                                 </div>
                             )}
@@ -413,7 +421,6 @@ export default function App() {
       );
   }
 
-  // ... (rest of App component)
   // ===================== 阅读器视图 =====================
   // 阻止浏览器默认右键菜单
   return (
@@ -569,6 +576,46 @@ export default function App() {
                        </div>
                    </details>
 
+                   {/* TTS 设置 */}
+                   <details className="group">
+                       <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center">
+                           {t('tts')}
+                           <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-[10px]" /></span>
+                       </summary>
+                       <div className="space-y-3 pt-3 pl-2">
+                           <label className="flex items-center space-x-2 cursor-pointer">
+                               <input type="checkbox" checked={tempSettings.ttsEnabled} onChange={e => updateSetting('ttsEnabled', e.target.checked)} className="rounded text-blue-500" />
+                               <span className="text-sm">{t('enableTTS')}</span>
+                           </label>
+                           
+                           {tempSettings.ttsEnabled && (
+                               <>
+                                   <div>
+                                       <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t('voice')}</label>
+                                       <select 
+                                           className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" 
+                                           value={tempSettings.ttsVoiceURI} 
+                                           onChange={(e) => updateSetting('ttsVoiceURI', e.target.value)}
+                                       >
+                                           <option value="">Default</option>
+                                           {state.ttsVoices.map(v => (
+                                               <option key={v.voiceURI} value={v.voiceURI}>
+                                                   {v.name} ({v.lang})
+                                               </option>
+                                           ))}
+                                       </select>
+                                   </div>
+                                   <button 
+                                       className="w-full py-2 bg-gray-200 dark:bg-gray-600 rounded hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors text-sm" 
+                                       onClick={() => controller.current?.testTTS()}
+                                   >
+                                       {t('testVoice')}
+                                   </button>
+                               </>
+                           )}
+                       </div>
+                   </details>
+
                    {/* 音频设置 */}
                    <details className="group">
                        <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center">
@@ -678,30 +725,38 @@ export default function App() {
       )}
 
       {/* 底部 / 音频播放器 (仅当有音频时显示) */}
-      {state.hasAudio && (
+      {(state.hasAudio || (tempSettings.ttsEnabled && !state.hasAudio)) && (
           <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 min-h-[5rem] shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
                <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full overflow-hidden">
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward"/></button>
+                   {state.hasAudio && (
+                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
+                   )}
+                   {state.hasAudio && (
+                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward"/></button>
+                   )}
                    <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
                        <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
                    </button>
-                   <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playNextSentence()}><Icon name="step-forward"/></button>
+                   {state.hasAudio && (
+                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playNextSentence()}><Icon name="step-forward"/></button>
+                   )}
                    
                    <div className="flex flex-col flex-1 min-w-0 mx-1 md:mx-2 overflow-hidden">
                        <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1 w-full">{state.audioTitle || 'No Audio'}</span>
-                       <div className="flex items-center gap-1 md:gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
-                           <span className="w-8 md:w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
-                           <input 
-                             type="range" 
-                             min="0" 
-                             max={state.audioDuration || 100} 
-                             value={state.audioCurrentTime} 
-                             onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
-                             className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer min-w-0"
-                           />
-                           <span className="w-8 md:w-10 shrink-0 text-left">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
-                       </div>
+                       {state.hasAudio && (
+                           <div className="flex items-center gap-1 md:gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
+                               <span className="w-8 md:w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
+                               <input 
+                                 type="range" 
+                                 min="0" 
+                                 max={state.audioDuration || 100} 
+                                 value={state.audioCurrentTime} 
+                                 onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
+                                 className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer min-w-0"
+                               />
+                               <span className="w-8 md:w-10 shrink-0 text-left">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+                           </div>
+                       )}
                    </div>
                </div>
           </div>
@@ -745,13 +800,20 @@ export default function App() {
               >
                   {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus-square" />}
               </button>
+              {/* Enable Jump Audio for TTS even if selectedElementId is missing, relying on selectedText */}
               <button 
                 className="p-2 hover:bg-gray-700 rounded transition-colors" 
                 title="Jump Audio" 
-                onClick={() => state.selectedElementId && controller.current?.seekToElementId(state.selectedElementId)}
-                disabled={!state.selectedElementId}
+                onClick={() => {
+                    if (state.selectedElementId) {
+                        controller.current?.seekToElementId(state.selectedElementId);
+                    } else if (tempSettings.ttsEnabled && state.selectedText) {
+                        controller.current?.seekToElementId(''); // Fallback to text jump
+                    }
+                }}
+                disabled={!state.selectedElementId && (!tempSettings.ttsEnabled || !state.selectedText)}
               >
-                  <Icon name="crosshairs" className={!state.selectedElementId ? "opacity-50" : ""} />
+                  <Icon name="crosshairs" className={!state.selectedElementId && (!tempSettings.ttsEnabled || !state.selectedText) ? "opacity-50" : ""} />
               </button>
           </div>
       )}

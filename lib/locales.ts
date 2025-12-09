@@ -55,7 +55,12 @@ export const translations = {
         xlarge: "Extra Large",
         pageDirection: "Page Direction",
         ltr: "Left to Right",
-        rtl: "Right to Left"
+        rtl: "Right to Left",
+        tts: "Text to Speech",
+        enableTTS: "Enable TTS (No Audio Books)",
+        voice: "Voice",
+        testVoice: "Test Voice",
+        noVoices: "No voices found"
     },
     zh: {
         tableOfContents: "目录",
@@ -113,7 +118,12 @@ export const translations = {
         xlarge: "特大",
         pageDirection: "翻页方向",
         ltr: "从左向右",
-        rtl: "从右向左"
+        rtl: "从右向左",
+        tts: "语音朗读 (TTS)",
+        enableTTS: "开启 TTS (无音频书籍)",
+        voice: "发音人",
+        testVoice: "测试发音",
+        noVoices: "未找到语音包"
     }
 };
 
