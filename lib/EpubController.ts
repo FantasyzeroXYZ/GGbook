@@ -75,6 +75,10 @@ export class EpubController {
         
         this.bindAudioEvents();
         this.setVolume(this.settings.audioVolume / 100);
+
+        // Bind script handler
+        this.handleScriptMessage = this.handleScriptMessage.bind(this);
+        window.addEventListener('message', this.handleScriptMessage);
         
         // 初始主题应用
         if (this.settings.darkMode) {
@@ -87,7 +91,8 @@ export class EpubController {
             isDarkMode: this.settings.darkMode,
             ankiConnected: false,
             hasAudio: false,
-            ttsVoices: []
+            ttsVoices: [],
+            editingBookmarkId: null
         });
     }
 
@@ -190,8 +195,7 @@ export class EpubController {
                 // No text on this page
                 // If we are auto-turning, try next page, otherwise stop
                 if (this.isTTSActive && !this.isTurningPage) {
-                     this.isTurningPage = true;
-                     this.nextPage();
+                     this.performTTSPageTurn();
                 } else {
                     alert("No text found on this page.");
                     this.stopAudio();
@@ -253,8 +257,7 @@ export class EpubController {
             // End of page, try to turn page
             this.removeTTSHighlights();
             if (!this.isTurningPage) {
-                this.isTurningPage = true;
-                this.nextPage(); 
+                this.performTTSPageTurn();
             }
             return;
         }
@@ -272,8 +275,6 @@ export class EpubController {
                 }
                 
                 // Use window.find to locate the text range
-                // Note: window.find selects the text (blue highlight). 
-                // We will wrap it with a span and then CLEAR the selection to avoid popping up the toolbar.
                 const found = contents.window.find(sentence, false, false, true, false, false, false);
                 
                 if (found) {
@@ -282,54 +283,42 @@ export class EpubController {
                     
                     const span = contents.document.createElement('span');
                     span.className = 'audio-highlight';
-                    // Inline styles as backup
                     span.style.backgroundColor = 'rgba(255, 255, 0, 0.4)';
                     span.style.borderRadius = '2px';
                     span.style.boxShadow = '0 0 2px rgba(255, 255, 0, 0.8)';
-                    // IMPORTANT: Disable pointer events on TTS highlight so it doesn't interfere with clicks/selection
                     span.style.pointerEvents = 'none'; 
                     
                     try {
                         range.surroundContents(span);
-                        // Store reference for cleanup
-                        // Scroll into view
                         span.scrollIntoView({ block: 'center', behavior: 'smooth' });
                         
-                        // CRITICAL: Clear native selection so the blue highlight disappears 
-                        // and doesn't trigger the "Selected" event in App.tsx
                         sel.removeAllRanges(); 
                         
-                        // We need to restore range position for NEXT search, but without selecting it visually.
-                        // We can just collapse to the end of our new span.
                         const newRange = contents.document.createRange();
                         newRange.selectNode(span);
                         newRange.collapse(false); // Collapse to end
                         sel.addRange(newRange);
                         
                     } catch (surroundError) {
-                        // Fallback: If surround fails (complex DOM), just keep selection but try to hide it?
-                        // Or just let it be.
-                        // sel.removeAllRanges(); // Maybe just clear it to be safe
+                        // Fallback: Just let selection stay collapsed at end if surround failed
+                        // to maintain cursor position
                     }
                 } else {
                     // Fallback search
                     const subSentence = sentence.substring(0, 20);
                     contents.window.find(subSentence, false, false, true, false, false, false);
-                    // Clear selection here too if found
                     if (contents.window.getSelection().rangeCount > 0) {
-                        contents.window.getSelection().removeAllRanges();
+                         contents.window.getSelection().collapseToEnd();
                     }
                 }
             } catch(e) { console.warn("Highlight error", e); }
         }
 
-        // Cleanup previous utterance handlers
         if (this.ttsUtterance) {
             this.ttsUtterance.onend = null;
             this.ttsUtterance.onerror = null;
         }
 
-        // Cancel any pending speech
         this.synth.cancel();
 
         this.ttsUtterance = new SpeechSynthesisUtterance(sentence);
@@ -346,18 +335,41 @@ export class EpubController {
         };
         
         this.ttsUtterance.onerror = (e: any) => {
-            // Ignore interruption/cancellation errors which happen naturally
             if (e.error === 'canceled' || e.error === 'interrupted') {
                 return;
             }
             console.error("TTS Error", e);
-            // Don't recursive loop on error, just stop
             if (this.isTTSActive) {
                 this.stopAudio();
             }
         };
 
         this.synth.speak(this.ttsUtterance);
+    }
+    
+    // Explicitly handle TTS page turn to ensure visual update matches audio
+    private async performTTSPageTurn() {
+        if (!this.rendition || this.isTurningPage) return;
+        this.isTurningPage = true;
+        
+        try {
+            await this.rendition.next();
+            // Critical Fix: Force a resize and wait to ensure the layout engine catches up
+            // This prevents "half-page" rendering issues
+            if(this.rendition.resize) this.rendition.resize();
+
+            // Wait longer for rendering to settle before extracting text
+            setTimeout(() => {
+                this.isTurningPage = false;
+                if (this.isTTSActive) {
+                    this.playCurrentPageTTS();
+                }
+            }, 1000); // Increased delay for stability
+        } catch(e) {
+            console.error("TTS Auto-turn failed", e);
+            this.stopAudio();
+            this.isTurningPage = false;
+        }
     }
 
     private removeTTSHighlights() {
@@ -376,7 +388,6 @@ export class EpubController {
                     parent.normalize(); // Merge text nodes
                 }
             });
-            // Don't clear selection here, as we might need position for next search
         });
     }
 
@@ -389,6 +400,7 @@ export class EpubController {
 
     public destroy() {
         this.stopAudio();
+        window.removeEventListener('message', this.handleScriptMessage);
 
         if (this.rendition) {
             try {
@@ -429,11 +441,11 @@ export class EpubController {
             hasAudio: false,
             showAudioList: false,
             currentAudioFile: null,
-            selectionToolbarVisible: false
+            selectionToolbarVisible: false,
+            editingBookmarkId: null
         });
     }
 
-    // ... (loadFile and other methods) ...
     public async loadFile(file: File | Blob, initialProgress?: BookProgress, bookmarks: Bookmark[] = []) {
         try {
             this.destroy();
@@ -456,11 +468,27 @@ export class EpubController {
             if (this.containerRef) {
                 this.renderBook();
                 try {
+                    // Fix: Wrap display in try-catch to handle invalid CFIs (fallback to start)
                     if (initialProgress && initialProgress.cfi) {
-                        await this.display(initialProgress.cfi);
+                        try {
+                            await this.display(initialProgress.cfi);
+                        } catch (displayError) {
+                            console.warn("Initial display failed (invalid CFI?), falling back to start.", displayError);
+                            await this.display();
+                        }
                     } else {
                         await this.display();
                     }
+
+                    // Fix: Move restoreHighlights AFTER display to ensure system is ready
+                    this.restoreHighlights(bookmarks);
+                    
+                    // Critical Fix: Ensure resize is called after initial display to correct half-page issues
+                    // Use rAF to ensure it runs after DOM paint
+                    requestAnimationFrame(() => {
+                        if(this.rendition) this.rendition.resize();
+                    });
+
                 } catch (renderError) {
                     console.error("Initial render failed", renderError);
                 }
@@ -490,6 +518,21 @@ export class EpubController {
             this.setState({ isLoading: false });
             alert(this.t('failed') + ': ' + e.message);
         }
+    }
+
+    private restoreHighlights(bookmarks: Bookmark[]) {
+        if (!this.rendition) return;
+        bookmarks.filter(b => b.type === 'highlight').forEach(bm => {
+            try {
+                this.rendition.annotations.add('highlight', bm.cfi, {
+                    fill: bm.color || 'yellow',
+                    fillOpacity: '0.3',
+                    mixBlendMode: 'multiply'
+                }, undefined, 'highlight-' + bm.id);
+            } catch (e) {
+                console.warn("Failed to restore highlight", bm.id, e);
+            }
+        });
     }
 
     private renderBook() {
@@ -528,6 +571,7 @@ export class EpubController {
                     -webkit-user-select: text !important;
                     user-select: text !important;
                     pointer-events: auto !important;
+                    height: 100% !important; /* Ensure height fill */
                 }
                 iframe { pointer-events: auto !important; }
                 rt { user-select: none !important; -webkit-user-select: none !important; }
@@ -548,25 +592,12 @@ export class EpubController {
 
         this.rendition.on('relocated', (location: any) => {
             this.setState({ currentCfi: location.start.cfi });
-            // TTS Auto-turn logic: If active, start reading new page
-            if (this.isTTSActive && this.settings.ttsEnabled && this.isTurningPage) {
-                // Small delay to ensure render is settled
-                setTimeout(() => {
-                    this.isTurningPage = false; // Reset flag
-                    this.playCurrentPageTTS();
-                }, 1000);
-            }
+            // TTS Auto-turn is handled in performTTSPageTurn, not here
         });
 
         this.rendition.on('selected', (cfiRange: string, contents: any) => {
             const range = contents.range(cfiRange);
             const text = range.toString();
-            
-            // TTS Highlight Check: If the selection is EXACTLY our highlight span, ignore it.
-            // However, native selection is usually cleared in playNextTTS.
-            // Just to be safe, if we are in TTS mode, we might want to suppress the toolbar unless explicitly selected by user.
-            // But user might want to select WHILE listening.
-            // Since we call removeAllRanges() in playNextTTS, this event shouldn't fire for TTS updates.
             
             let elementId = null;
             let node = range.commonAncestorContainer;
@@ -605,7 +636,8 @@ export class EpubController {
                     selectionRect: absoluteRect,
                     selectedText: text,
                     selectedSentence: sentence,
-                    selectedElementId: elementId
+                    selectedElementId: elementId,
+                    selectedCfiRange: cfiRange
                 });
             }
         });
@@ -622,6 +654,7 @@ export class EpubController {
         }
     }
 
+    // ... (rest of methods unchanged)
     public getCurrentPercentage(): number {
         if (!this.rendition || !this.book) return 0;
         const currentLocation = this.rendition.currentLocation();
@@ -681,19 +714,104 @@ export class EpubController {
             const newBookmark: Bookmark = {
                 id: new Date().getTime().toString(),
                 cfi: location.start.cfi,
+                type: 'bookmark',
                 label: label + ` (${new Date().toLocaleTimeString()})`,
                 createdAt: Date.now(),
                 audioSrc: shouldRecordAudio ? this.currentAudioFile! : undefined,
-                audioTime: shouldRecordAudio ? this.audioPlayer.currentTime : undefined
+                audioTime: shouldRecordAudio ? this.audioPlayer.currentTime : undefined,
+                color: '#FFEB3B', // Default yellow
+                note: ''
             };
             const newBookmarks = [...this.state.bookmarks, newBookmark];
-            this.setState({ bookmarks: newBookmarks });
+            this.setState({ bookmarks: newBookmarks, editingBookmarkId: newBookmark.id }); 
             return newBookmarks;
         }
         return null;
     }
 
+    public async addHighlight(color: string, explicitCfiRange?: string, explicitText?: string) {
+        const cfiRange = explicitCfiRange || this.state.selectedCfiRange;
+        const text = explicitText || this.state.selectedText;
+        
+        if (!this.rendition || !cfiRange) return;
+        
+        const id = new Date().getTime().toString();
+        
+        // Visual annotation
+        try {
+            this.rendition.annotations.add('highlight', cfiRange, {
+                fill: color,
+                fillOpacity: '0.3',
+                mixBlendMode: 'multiply'
+            }, undefined, 'highlight-' + id);
+        } catch (e) {
+            console.error("Annotation failed", e);
+            // Proceed anyway to save bookmark
+        }
+        
+        // Data persistence
+        const location = this.rendition.currentLocation();
+        const label = `Page ${location?.start?.displayed?.page || '?'}`;
+        
+        const newHighlight: Bookmark = {
+            id: id,
+            cfi: cfiRange, // Store the range CFI
+            type: 'highlight',
+            label: label,
+            text: text || '',
+            createdAt: Date.now(),
+            color: color,
+            note: ''
+        };
+        
+        const newBookmarks = [...this.state.bookmarks, newHighlight];
+        this.setState({ 
+            bookmarks: newBookmarks, 
+            // We do NOT set selectionToolbarVisible: false here anymore, 
+            // as it might be handled by the caller or we want to show editor
+        }); 
+        
+        // Deselect
+        try {
+            const contents = this.rendition.getContents()[0];
+            if (contents) {
+                 const sel = contents.window.getSelection();
+                 sel.removeAllRanges();
+            }
+        } catch(e) {}
+        
+        return newBookmarks;
+    }
+
+    public updateBookmark(id: string, updates: Partial<Bookmark>) {
+        // If updating color of a highlight, we need to remove and re-add the annotation
+        const target = this.state.bookmarks.find(b => b.id === id);
+        if (target && target.type === 'highlight' && updates.color && updates.color !== target.color) {
+            try {
+                this.rendition.annotations.remove(target.cfi, 'highlight');
+                this.rendition.annotations.add('highlight', target.cfi, {
+                    fill: updates.color,
+                    fillOpacity: '0.3',
+                    mixBlendMode: 'multiply'
+                }, undefined, 'highlight-' + id);
+            } catch (e) { console.warn("Update highlight failed", e); }
+        }
+
+        const newBookmarks = this.state.bookmarks.map(bm => 
+            bm.id === id ? { ...bm, ...updates } : bm
+        );
+        this.setState({ bookmarks: newBookmarks });
+        return newBookmarks;
+    }
+
     public removeBookmark(id: string) {
+        const target = this.state.bookmarks.find(b => b.id === id);
+        if (target && target.type === 'highlight') {
+            try {
+                this.rendition.annotations.remove(target.cfi, 'highlight');
+            } catch(e) {}
+        }
+
         const newBookmarks = this.state.bookmarks.filter(b => b.id !== id);
         this.setState({ bookmarks: newBookmarks });
         return newBookmarks;
@@ -720,7 +838,6 @@ export class EpubController {
     public seekToElementId(elementId: string) {
         // TTS: Jump to text
         if (!this.state.hasAudio && this.settings.ttsEnabled && this.state.selectedText) {
-            // Cleanup existing
             if (this.ttsUtterance) {
                 this.ttsUtterance.onend = null;
                 this.ttsUtterance.onerror = null;
@@ -728,10 +845,8 @@ export class EpubController {
             this.synth.cancel();
             this.removeTTSHighlights();
             
-            // Restart with selection
             this.playCurrentPageTTS(this.state.selectedText);
             
-            // Explicitly close toolbar
             this.setState({ selectionToolbarVisible: false });
             return;
         }
@@ -852,6 +967,9 @@ export class EpubController {
 
     public prevPage() {
         if (this.state.isLoading) return;
+        if (this.isTTSActive) {
+            this.stopAudio();
+        }
         if (this.rendition) {
             try { this.rendition.prev(); } catch(e) {}
         }
@@ -859,6 +977,9 @@ export class EpubController {
 
     public nextPage() {
         if (this.state.isLoading) return;
+        if (this.isTTSActive) {
+            this.stopAudio();
+        }
         if (this.rendition) {
             try { this.rendition.next(); } catch(e) {}
         }
@@ -870,24 +991,15 @@ export class EpubController {
                 await this.rendition.display(target);
             } catch(e) {
                 console.warn("Display failed", e);
+                throw e; // Re-throw to handle in caller
             }
         }
     }
 
     public highlightSelection() {
-        if(!this.rendition) return;
-        const selection = this.rendition.getContents()[0]?.window.getSelection();
-        if(selection && selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            const span = document.createElement('span');
-            span.style.backgroundColor = 'rgba(255, 235, 59, 0.5)';
-            try {
-                range.surroundContents(span);
-                this.setState({ selectionToolbarVisible: false });
-            } catch(e) {
-                alert("Cannot highlight across block elements");
-            }
-        }
+        // Legacy highlight method (yellow only, no persistence) - kept for fallback or specific logic if needed
+        // but generally we use addHighlight now.
+        this.addHighlight('#FFEB3B');
     }
 
     private bindAudioEvents() {
@@ -1052,7 +1164,6 @@ export class EpubController {
     
     public playPrevSentence() {
         if (this.settings.ttsEnabled && this.isTTSActive) {
-            // TTS previous sentence logic could be added here
             return;
         }
 
@@ -1101,7 +1212,9 @@ export class EpubController {
         this.settings.audioVolume = val * 100;
         this.saveSettings();
     }
-
+    
+    // ... Audio loading logic remains same
+    
     private async loadAudioFromEPUB() {
         if (!this.book) return;
         const manifest = await this.book.loaded.manifest;
@@ -1296,9 +1409,53 @@ export class EpubController {
         });
     }
 
+    // Handle Script Messages (Tampermonkey)
+    private handleScriptMessage(event: MessageEvent) {
+        // Filter messages to strictly ensure we are handling the right response
+        if (event.data && event.data.type === 'VAM_SEARCH_RESPONSE') {
+            const { html, error, id } = event.data.payload;
+            // In a more complex app, we might match ID with a pending request map
+            // For now, we assume the latest response corresponds to the open modal
+            this.setState({
+                scriptTabContent: html,
+                scriptTabError: error,
+                scriptTabLoading: false
+            });
+        }
+    }
+
+    public searchWithScript(word: string) {
+        const id = new Date().getTime().toString();
+        // Post message to window, which the Tampermonkey script listens to
+        window.postMessage({
+            type: 'VAM_SEARCH_REQUEST',
+            payload: {
+                word: word,
+                lang: this.settings.language,
+                id: id
+            }
+        }, '*');
+    }
+
     public async lookupWord(word: string) {
         if (!word) return;
-        this.setState({ dictionaryModalVisible: true, dictionaryLoading: true, dictionaryError: null, selectedText: word });
+        
+        // Initial state for Dictionary UI
+        this.setState({ 
+            dictionaryModalVisible: true, 
+            dictionaryLoading: true, 
+            dictionaryError: null, 
+            selectedText: word,
+            
+            // Initial state for Script Tab
+            scriptTabContent: null,
+            scriptTabLoading: true,
+            scriptTabError: null
+        });
+
+        // Trigger Script Search (Async, handled by event listener)
+        this.searchWithScript(word);
+
         try {
             const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
             if (!res.ok) throw new Error('Word not found');

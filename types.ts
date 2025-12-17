@@ -13,12 +13,15 @@ export interface BookProgress {
 
 export interface Bookmark {
     id: string;
-    cfi: string;
-    label: string;
+    cfi: string; // Start CFI or Range CFI
+    type: 'bookmark' | 'highlight'; // New: Distinguish between page bookmark and highlight
+    label: string; // Page number or Chapter name
+    text?: string; // New: The actual highlighted text
     createdAt: number;
-    // New: Audio state for bookmarks
     audioSrc?: string;
     audioTime?: number;
+    note?: string;
+    color?: string; // hex code
 }
 
 // 书架中的书籍元数据
@@ -100,10 +103,16 @@ export interface ReaderState {
     selectedText: string;
     selectedSentence?: string; // New: Captured sentence context
     selectedElementId: string | null;
+    selectedCfiRange: string | null; // New: Store the range CFI for highlighting
     dictionaryModalVisible: boolean;
     dictionaryData: any | null;
     dictionaryLoading: boolean;
     dictionaryError: string | null;
+    
+    // Script Dictionary (Tampermonkey)
+    scriptTabContent: string | null;
+    scriptTabLoading: boolean;
+    scriptTabError: string | null;
 
     // Anki 集成
     ankiConnected: boolean;
@@ -113,6 +122,9 @@ export interface ReaderState {
 
     // UI Feedback
     toastMessage: string | null;
+    
+    // Bookmark Editing
+    editingBookmarkId: string | null;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

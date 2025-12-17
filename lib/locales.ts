@@ -1,10 +1,16 @@
 export const translations = {
     en: {
         tableOfContents: "Table of Contents",
-        bookmarks: "Bookmarks",
-        noBookmarks: "No Bookmarks",
-        addBookmark: "Add Bookmark",
+        bookmarks: "Bookmarks & Highlights",
+        noBookmarks: "No Bookmarks or Highlights",
+        addBookmark: "Bookmark Page",
         removeBookmark: "Remove",
+        editBookmark: "Edit",
+        notePlaceholder: "Add a note...",
+        bookmarkColor: "Color",
+        save: "Save",
+        cancel: "Cancel",
+        exportNotes: "Export Notes (Markdown)",
         noTOC: "No Table of Contents",
         uploadTitle: "Upload EPUB",
         uploadDesc: "Drag & drop or click to select",
@@ -60,14 +66,26 @@ export const translations = {
         enableTTS: "Enable TTS (No Audio Books)",
         voice: "Voice",
         testVoice: "Test Voice",
-        noVoices: "No voices found"
+        noVoices: "No voices found",
+        scriptTab: "Script",
+        waitingForScript: "Waiting for Tampermonkey script...",
+        scriptNotInstalled: "No response. Ensure the script is installed and running.",
+        selectedText: "Selected Text",
+        highlight: "Highlight",
+        pageBookmark: "Page Bookmark"
     },
     zh: {
         tableOfContents: "目录",
-        bookmarks: "书签",
-        noBookmarks: "暂无书签",
-        addBookmark: "添加书签",
+        bookmarks: "书签与笔记",
+        noBookmarks: "暂无书签或笔记",
+        addBookmark: "添加页码书签",
         removeBookmark: "删除",
+        editBookmark: "编辑",
+        notePlaceholder: "添加笔记 (可选)...",
+        bookmarkColor: "标记颜色",
+        save: "保存",
+        cancel: "取消",
+        exportNotes: "导出笔记 (Markdown)",
         noTOC: "暂无目录",
         uploadTitle: "上传 EPUB",
         uploadDesc: "拖拽或点击选择文件",
@@ -123,7 +141,13 @@ export const translations = {
         enableTTS: "开启 TTS (无音频书籍)",
         voice: "发音人",
         testVoice: "测试发音",
-        noVoices: "未找到语音包"
+        noVoices: "未找到语音包",
+        scriptTab: "Script (油猴)",
+        waitingForScript: "等待脚本响应...",
+        scriptNotInstalled: "无响应。请确保已安装并启用了对应的油猴脚本。",
+        selectedText: "原文",
+        highlight: "高亮",
+        pageBookmark: "页码书签"
     }
 };
 
