@@ -313,6 +313,7 @@ export default function App() {
               handleImportBook={handleImportBook}
               updateSetting={updateSetting}
               tempSettings={tempSettings}
+              onToggleSettings={() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }))}
           />
       );
   }

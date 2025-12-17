@@ -123,6 +123,18 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     <div 
         className={`h-[100dvh] flex flex-col overflow-hidden ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}
         onContextMenu={(e) => e.preventDefault()}
+        onClick={(e) => {
+            // 全局点击逻辑：如果点击时显示工具栏且没有有效文本选区，则立即关闭工具栏
+            if (state.selectionToolbarVisible) {
+                // 延迟检查选区状态，给 DOM 选区更新一点时间，增加鲁棒性
+                setTimeout(() => {
+                    const sel = window.getSelection();
+                    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+                        setState(s => ({ ...s, selectionToolbarVisible: false, selectionRect: null }));
+                    }
+                }, 50);
+            }
+        }}
     >
       
       {/* 顶部导航 */}
@@ -426,37 +438,37 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           </div>
       )}
 
-      {/* 底部 / 音频播放器 (仅当有音频时显示) */}
+      {/* 底部 / 音频播放器 (精简高度为 h-11/44px) */}
       {(state.hasAudio || (tempSettings.ttsEnabled && !state.hasAudio)) && (
-          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-2 flex items-center justify-center z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-20 min-h-[5rem] shrink-0 relative audio-controls-area transition-colors duration-300 w-full overflow-hidden">
-               <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 transition-transform translate-y-0 opacity-100 max-w-full overflow-hidden">
+          <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-0.5 flex items-center justify-center z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-16 md:h-11 shrink-0 relative transition-colors duration-300 w-full overflow-hidden">
+               <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 max-w-full overflow-hidden">
                    {state.hasAudio && (
-                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list"/></button>
+                       <button className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.toggleAudioList()}><Icon name="list" className="text-xs md:text-sm"/></button>
                    )}
                    {state.hasAudio && (
-                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward"/></button>
+                       <button className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playPrevSentence()}><Icon name="step-backward" className="text-xs md:text-sm"/></button>
                    )}
-                   <button className="w-10 h-10 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
-                       <Icon name={state.isAudioPlaying ? "pause" : "play"}/>
+                   <button className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-blue-500 text-white hover:bg-blue-600 flex items-center justify-center shadow-lg shrink-0" onClick={() => controller.current?.toggleAudio()}>
+                       <Icon name={state.isAudioPlaying ? "pause" : "play"} className="text-xs md:text-sm"/>
                    </button>
                    {state.hasAudio && (
-                       <button className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playNextSentence()}><Icon name="step-forward"/></button>
+                       <button className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center text-gray-700 dark:text-gray-200 shrink-0" onClick={() => controller.current?.playNextSentence()}><Icon name="step-forward" className="text-xs md:text-sm"/></button>
                    )}
                    
-                   <div className="flex flex-col flex-1 min-w-0 mx-1 md:mx-2 overflow-hidden">
-                       <span className="text-xs truncate text-gray-800 dark:text-gray-200 text-center mb-1 w-full">{state.audioTitle || 'No Audio'}</span>
+                   <div className="flex flex-col flex-1 min-w-0 mx-1 md:mx-2 overflow-hidden justify-center">
+                       <span className="text-[10px] md:text-[11px] truncate text-gray-800 dark:text-gray-200 text-center w-full font-medium leading-none mb-0.5">{state.audioTitle || 'No Audio'}</span>
                        {state.hasAudio && (
-                           <div className="flex items-center gap-1 md:gap-2 text-xs text-gray-500 dark:text-gray-400 w-full">
-                               <span className="w-8 md:w-10 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
+                           <div className="flex items-center gap-1 md:gap-2 text-[8px] md:text-[9px] text-gray-500 dark:text-gray-400 w-full">
+                               <span className="w-7 md:w-8 text-right shrink-0">{Math.floor(state.audioCurrentTime/60)}:{Math.floor(state.audioCurrentTime%60).toString().padStart(2,'0')}</span>
                                <input 
                                  type="range" 
                                  min="0" 
                                  max={state.audioDuration || 100} 
                                  value={state.audioCurrentTime} 
                                  onChange={e => controller.current?.seekAudio(parseFloat(e.target.value))} 
-                                 className="flex-1 h-1 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer min-w-0"
+                                 className="flex-1 h-0.5 bg-gray-300 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer min-w-0"
                                />
-                               <span className="w-8 md:w-10 shrink-0 text-left">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
+                               <span className="w-7 md:w-8 shrink-0 text-left">{Math.floor(state.audioDuration/60)}:{Math.floor(state.audioDuration%60).toString().padStart(2,'0')}</span>
                            </div>
                        )}
                    </div>

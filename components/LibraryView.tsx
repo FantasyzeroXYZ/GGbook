@@ -11,6 +11,7 @@ interface LibraryViewProps {
     handleImportBook: (e: React.ChangeEvent<HTMLInputElement>) => void;
     updateSetting: (key: keyof AppSettings, val: any) => void;
     tempSettings: AppSettings;
+    onToggleSettings: () => void;
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({
@@ -20,7 +21,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     deleteBook,
     handleImportBook,
     updateSetting,
-    tempSettings
+    tempSettings,
+    onToggleSettings
 }) => {
     const t = translations[tempSettings.language || 'zh'];
 
@@ -78,7 +80,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 <h1 className="text-xl font-bold flex items-center gap-2">
                     <Icon name="book-reader" /> React EPUB Reader
                 </h1>
-                <div className="flex gap-4">
+                <div className="flex gap-2">
+                    <button onClick={onToggleSettings} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700" title={t.settings}>
+                        <Icon name="cog"/>
+                    </button>
                     <button onClick={() => updateSetting('darkMode', !state.isDarkMode)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-700">
                         <Icon name={state.isDarkMode ? 'sun' : 'moon'}/>
                     </button>
@@ -146,6 +151,39 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     ))}
                 </div>
             </div>
+
+            {/* 当处于首页且设置开启时，显示设置侧边栏 */}
+            {state.isSettingsOpen && (
+                <div className="fixed inset-0 z-50">
+                    <div className="absolute inset-0 bg-black/20" onClick={onToggleSettings}></div>
+                    <div className="absolute inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl flex flex-col animate-bounce-in">
+                        <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100 shrink-0">
+                            <span>{t.settings}</span>
+                            <button onClick={onToggleSettings}><Icon name="times"/></button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                             {/* 语言/外观设置 */}
+                             <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t.language}</label>
+                                    <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value as any)}>
+                                        <option value="zh">中文</option>
+                                        <option value="en">English</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t.theme}</label>
+                                    <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value as any)}>
+                                        <option value="light">{t.light}</option>
+                                        <option value="dark">{t.dark}</option>
+                                        <option value="sepia">{t.sepia}</option>
+                                    </select>
+                                </div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

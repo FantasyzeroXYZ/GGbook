@@ -39,6 +39,7 @@ export class EpubController {
     // 引用
     private containerRef: HTMLElement | null = null;
     private resizeObserver: ResizeObserver | null = null;
+    private resizeTimeout: any = null;
 
     constructor(initialState: ReaderState, updateState: StateUpdater) {
         this.state = initialState;
@@ -235,7 +236,7 @@ export class EpubController {
         this.isTurningPage = true;
         try {
             await this.rendition.next();
-            if(this.rendition.resize) this.rendition.resize();
+            this.syncLayout();
             setTimeout(() => {
                 this.isTurningPage = false;
                 if (this.isTTSActive) this.playCurrentPageTTS();
@@ -260,22 +261,39 @@ export class EpubController {
         });
     }
 
+    /**
+     * 强力同步布局：强制触发 epubjs 和浏览器的重绘逻辑
+     */
+    private syncLayout() {
+        if (!this.rendition) return;
+        requestAnimationFrame(() => {
+            try {
+                this.rendition.resize();
+                // 关键补丁：分发全局 resize 事件让 epubjs 内部的分页逻辑重新校验
+                window.dispatchEvent(new Event('resize'));
+            } catch (e) {}
+        });
+    }
+
     public async mount(element: HTMLElement) {
         this.containerRef = element;
 
-        // 设置 ResizeObserver 来解决布局不刷新导致的空白问题
+        // 设置 ResizeObserver 并增加更积极的防抖处理，彻底解决重新打开时的空白问题
         if (this.resizeObserver) this.resizeObserver.disconnect();
-        this.resizeObserver = new ResizeObserver(() => {
-            if (this.rendition) {
-                requestAnimationFrame(() => {
-                    try { this.rendition.resize(); } catch(e) {}
-                });
-            }
+        this.resizeObserver = new ResizeObserver((entries) => {
+            if (this.resizeTimeout) clearTimeout(this.resizeTimeout);
+            this.resizeTimeout = setTimeout(() => {
+                this.syncLayout();
+            }, 100);
         });
         this.resizeObserver.observe(element);
 
         if (this.book && !this.rendition) {
             await this.renderBookAndDisplay();
+        } else if (this.rendition) {
+            // 立即并延迟触发两次同步，确保动画结束后布局正确
+            this.syncLayout();
+            setTimeout(() => this.syncLayout(), 300);
         }
     }
 
@@ -283,6 +301,7 @@ export class EpubController {
         this.stopAudio();
         window.removeEventListener('message', this.handleScriptMessage);
         if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
+        if (this.resizeTimeout) clearTimeout(this.resizeTimeout);
 
         if (this.rendition) {
             try { this.rendition.destroy(); } catch (e) {}
@@ -355,15 +374,25 @@ export class EpubController {
             width: '100%', height: '100%', flow: 'paginated', manager: 'default', allowScriptedContent: true
         });
         this.registerThemesAndHooks();
+        
+        // 关键：监听渲染完成事件，再次同步布局
+        this.rendition.on('displayed', () => {
+            this.syncLayout();
+            // 普通书籍需要更长时间处理样式导致的重排
+            setTimeout(() => this.syncLayout(), 500);
+        });
+
         try {
             await this.safeDisplay(this.pendingProgress?.cfi);
             this.restoreHighlights(this.pendingBookmarks);
             this.applySettings();
             this.pendingProgress = undefined;
             this.pendingBookmarks = [];
-            // 多次触发 resize 确保稳定
-            setTimeout(() => this.rendition.resize(), 100);
-            setTimeout(() => this.rendition.resize(), 500);
+            
+            // 多次延迟触发确保布局彻底稳定
+            setTimeout(() => this.syncLayout(), 100);
+            setTimeout(() => this.syncLayout(), 800);
+            setTimeout(() => this.syncLayout(), 2000);
         } catch (renderError) { console.error(renderError); }
     }
 
@@ -415,17 +444,30 @@ export class EpubController {
              contents.document.head.appendChild(style);
              
              // 解决工具栏不自动关闭的问题：监听 iframe 内的点击
-             contents.document.addEventListener('click', () => {
+             contents.document.addEventListener('click', (e: MouseEvent) => {
                  const sel = contents.window.getSelection();
-                 if (sel.isCollapsed) {
+                 if (!sel || sel.isCollapsed || !sel.toString().trim()) {
                      this.setState({ selectionToolbarVisible: false, selectionRect: null });
                  }
              });
 
              contents.document.addEventListener('contextmenu', (e: Event) => { e.preventDefault(); e.stopPropagation(); }, false);
+             
+             // 为普通书籍增加渲染后的重排触发
+             setTimeout(() => this.syncLayout(), 100);
         });
 
-        this.rendition.on('relocated', (location: any) => this.setState({ currentCfi: location.start.cfi }));
+        this.rendition.on('relocated', (location: any) => {
+            this.setState({ currentCfi: location.start.cfi });
+            // 如果页面跳转后发现选区消失，静默关闭工具栏
+            const contents = this.rendition.getContents()[0];
+            if (contents) {
+                const sel = contents.window.getSelection();
+                if (!sel || sel.isCollapsed) {
+                    this.setState({ selectionToolbarVisible: false, selectionRect: null });
+                }
+            }
+        });
 
         this.rendition.on('selected', (cfiRange: string, contents: any) => {
             const range = contents.range(cfiRange);
@@ -462,7 +504,7 @@ export class EpubController {
         if (this.rendition) {
             try { 
                 this.rendition.spread(mode === 'single' ? 'none' : 'auto'); 
-                setTimeout(() => this.rendition.resize(), 100);
+                setTimeout(() => this.syncLayout(), 150);
             } catch (e) {}
         }
     }
@@ -487,7 +529,7 @@ export class EpubController {
                 style.innerHTML = `html, body { writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; -webkit-writing-mode: ${direction === 'vertical' ? 'vertical-rl' : 'horizontal-tb'} !important; }`;
                 if (!style.parentNode) doc.head.appendChild(style);
             });
-            setTimeout(() => this.rendition.resize(), 100);
+            setTimeout(() => this.syncLayout(), 150);
         }
     }
 
