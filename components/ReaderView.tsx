@@ -4,7 +4,7 @@ import { Icon } from './Icon';
 import { translations } from '../lib/locales';
 import { BookmarkEditor } from './BookmarkEditor';
 
-type SidebarTab = 'toc' | 'bookmarks';
+type SidebarTab = 'toc' | 'bookmarks' | 'notes';
 type DictionaryTab = 'api' | 'script';
 
 interface ReaderViewProps {
@@ -60,12 +60,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         ));
     };
   
-    const renderBookmarks = () => {
-        if (state.bookmarks.length === 0) {
-            return <div className="p-4 text-gray-500">{t.noBookmarks}</div>;
+    const renderBookmarksList = (type: 'bookmark' | 'highlight') => {
+        const filtered = state.bookmarks.filter(b => b.type === type);
+        
+        if (filtered.length === 0) {
+            return <div className="p-4 text-gray-500">{type === 'bookmark' ? t.noBookmarks : t.noNotes}</div>;
         }
-        // Sort: Page bookmarks first, then highlights (or just by creation time)
-        const sortedBookmarks = [...state.bookmarks].sort((a,b) => b.createdAt - a.createdAt);
+
+        // Sort: Latest first
+        const sortedBookmarks = [...filtered].sort((a,b) => b.createdAt - a.createdAt);
 
         return sortedBookmarks.map((bm) => (
             <div key={bm.id} className="p-3 border-b dark:border-gray-700 flex justify-between items-start hover:bg-gray-100 dark:hover:bg-gray-700">
@@ -78,17 +81,17 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 >
                     <div className="flex items-center gap-2">
                          {bm.type === 'highlight' ? (
-                            <div className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor: bm.color || '#FFEB3B'}}></div>
+                            <div className="w-3 h-3 rounded-full shrink-0 border border-gray-300 dark:border-gray-600 shadow-sm" style={{backgroundColor: bm.color || '#FFEB3B'}}></div>
                          ) : (
                             <Icon name="bookmark" className="text-blue-500 text-xs" />
                          )}
                          <span className="text-xs text-gray-400 font-mono">
-                            {bm.type === 'highlight' ? t.highlight : t.pageBookmark}
+                            {bm.type === 'highlight' ? new Date(bm.createdAt).toLocaleDateString() : t.pageBookmark}
                          </span>
                     </div>
                     
                     {bm.text && (
-                        <div className="text-sm font-serif line-clamp-2 border-l-2 pl-2 border-gray-300 dark:border-gray-600 italic opacity-80">
+                        <div className="text-sm font-serif line-clamp-3 border-l-2 pl-2 border-gray-300 dark:border-gray-600 italic opacity-80 my-1">
                             {bm.text}
                         </div>
                     )}
@@ -97,7 +100,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                         {bm.label}
                     </div>
 
-                    {bm.note && <div className="text-xs text-gray-600 dark:text-gray-400 truncate pl-2 mt-1 bg-gray-50 dark:bg-gray-800 p-1 rounded"><Icon name="sticky-note" className="mr-1"/>{bm.note}</div>}
+                    {bm.note && <div className="text-xs text-gray-600 dark:text-gray-400 truncate pl-2 mt-1 bg-gray-50 dark:bg-gray-800 p-1.5 rounded border dark:border-gray-600"><Icon name="sticky-note" className="mr-1"/>{bm.note}</div>}
                     {bm.audioSrc && <span className="text-xs text-blue-500 pl-2"><Icon name="volume-up"/> Audio saved</span>}
                 </div>
                 <div className="flex flex-col gap-1 ml-2">
@@ -152,26 +155,32 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 
           {/* 侧边栏 (目录/书签) */}
           <div className={`fixed inset-y-0 left-0 w-80 bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} flex flex-col`}>
-               <div className="flex border-b dark:border-gray-700">
+               <div className="flex border-b dark:border-gray-700 overflow-x-auto no-scrollbar">
                    <button 
-                       className={`flex-1 p-3 font-bold ${sidebarTab === 'toc' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
+                       className={`flex-1 min-w-[33%] p-3 font-bold text-sm ${sidebarTab === 'toc' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
                        onClick={() => setSidebarTab('toc')}
                    >
                        {t.tableOfContents}
                    </button>
                    <button 
-                       className={`flex-1 p-3 font-bold ${sidebarTab === 'bookmarks' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
+                       className={`flex-1 min-w-[33%] p-3 font-bold text-sm ${sidebarTab === 'bookmarks' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
                        onClick={() => setSidebarTab('bookmarks')}
                    >
                        {t.bookmarks}
                    </button>
+                   <button 
+                       className={`flex-1 min-w-[33%] p-3 font-bold text-sm ${sidebarTab === 'notes' ? 'text-blue-500 border-b-2 border-blue-500' : 'text-gray-600 dark:text-gray-400'}`}
+                       onClick={() => setSidebarTab('notes')}
+                   >
+                       {t.notes}
+                   </button>
                </div>
                <div className="overflow-y-auto flex-1 pb-20">
-                   {sidebarTab === 'toc' ? (
+                   {sidebarTab === 'toc' && (
                        state.navigationMap.length > 0 ? renderTOC(state.navigationMap) : <div className="p-4 text-gray-500">{t.noTOC}</div>
-                   ) : (
-                       renderBookmarks()
                    )}
+                   {sidebarTab === 'bookmarks' && renderBookmarksList('bookmark')}
+                   {sidebarTab === 'notes' && renderBookmarksList('highlight')}
                </div>
                <button onClick={() => setState(s => ({ ...s, isSidebarOpen: false }))} className="absolute top-2 right-2 text-gray-500"><Icon name="times"/></button>
           </div>

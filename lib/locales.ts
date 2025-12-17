@@ -1,8 +1,10 @@
 export const translations = {
     en: {
-        tableOfContents: "Table of Contents",
-        bookmarks: "Bookmarks & Highlights",
-        noBookmarks: "No Bookmarks or Highlights",
+        tableOfContents: "Contents",
+        bookmarks: "Bookmarks",
+        notes: "Notes",
+        noBookmarks: "No Bookmarks",
+        noNotes: "No Highlights or Notes",
         addBookmark: "Bookmark Page",
         removeBookmark: "Remove",
         editBookmark: "Edit",
@@ -76,8 +78,10 @@ export const translations = {
     },
     zh: {
         tableOfContents: "目录",
-        bookmarks: "书签与笔记",
-        noBookmarks: "暂无书签或笔记",
+        bookmarks: "书签",
+        notes: "笔记",
+        noBookmarks: "暂无书签",
+        noNotes: "暂无高亮笔记",
         addBookmark: "添加页码书签",
         removeBookmark: "删除",
         editBookmark: "编辑",

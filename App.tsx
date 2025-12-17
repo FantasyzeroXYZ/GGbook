@@ -44,6 +44,7 @@ export default function App() {
     selectedText: '',
     selectedSentence: '',
     selectedElementId: null,
+    selectedCfiRange: null,
     dictionaryModalVisible: false,
     dictionaryData: null,
     dictionaryLoading: false,

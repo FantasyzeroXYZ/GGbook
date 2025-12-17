@@ -10,6 +10,10 @@ export class EpubController {
     private state: ReaderState;
     private updateReactState: StateUpdater;
     
+    // 初始化队列
+    private pendingProgress: BookProgress | undefined;
+    private pendingBookmarks: Bookmark[] = [];
+    
     // 设置
     public settings: AppSettings;
     public ankiSettings: AnkiSettings;
@@ -391,10 +395,11 @@ export class EpubController {
         });
     }
 
-    public mount(element: HTMLElement) {
+    public async mount(element: HTMLElement) {
         this.containerRef = element;
+        // If book is loaded but rendition not created (race condition fix)
         if (this.book && !this.rendition) {
-            this.renderBook();
+            await this.renderBookAndDisplay();
         }
     }
 
@@ -425,6 +430,8 @@ export class EpubController {
         this.audioGroups.clear();
         this.currentAudioFile = null;
         this.currentAudioIndex = -1;
+        this.pendingProgress = undefined;
+        this.pendingBookmarks = [];
         
         if (this.audioContext) {
             this.audioContext.close();
@@ -452,7 +459,14 @@ export class EpubController {
             this.setState({ isLoading: true, loadingMessage: this.t('opening'), bookmarks: bookmarks });
             
             this.book = ePub(file);
+            
+            // Store pending state in case container isn't ready
+            this.pendingProgress = initialProgress;
+            this.pendingBookmarks = bookmarks;
+
             await this.book.ready;
+            // Critical: Wait for spine to be fully parsed to prevent "No Section Found"
+            await this.book.loaded.spine;
 
             this.book.locations.generate(1000).catch((e: any) => console.warn("Locations generation failed", e));
 
@@ -466,34 +480,9 @@ export class EpubController {
             });
 
             if (this.containerRef) {
-                this.renderBook();
-                try {
-                    // Fix: Wrap display in try-catch to handle invalid CFIs (fallback to start)
-                    if (initialProgress && initialProgress.cfi) {
-                        try {
-                            await this.display(initialProgress.cfi);
-                        } catch (displayError) {
-                            console.warn("Initial display failed (invalid CFI?), falling back to start.", displayError);
-                            await this.display();
-                        }
-                    } else {
-                        await this.display();
-                    }
-
-                    // Fix: Move restoreHighlights AFTER display to ensure system is ready
-                    this.restoreHighlights(bookmarks);
-                    
-                    // Critical Fix: Ensure resize is called after initial display to correct half-page issues
-                    // Use rAF to ensure it runs after DOM paint
-                    requestAnimationFrame(() => {
-                        if(this.rendition) this.rendition.resize();
-                    });
-
-                } catch (renderError) {
-                    console.error("Initial render failed", renderError);
-                }
-                this.applySettings();
+                await this.renderBookAndDisplay();
             }
+            // If containerRef is null, mount() will handle rendering when called
 
             this.setState({ isLoading: false });
 
@@ -520,23 +509,12 @@ export class EpubController {
         }
     }
 
-    private restoreHighlights(bookmarks: Bookmark[]) {
-        if (!this.rendition) return;
-        bookmarks.filter(b => b.type === 'highlight').forEach(bm => {
-            try {
-                this.rendition.annotations.add('highlight', bm.cfi, {
-                    fill: bm.color || 'yellow',
-                    fillOpacity: '0.3',
-                    mixBlendMode: 'multiply'
-                }, undefined, 'highlight-' + bm.id);
-            } catch (e) {
-                console.warn("Failed to restore highlight", bm.id, e);
-            }
-        });
-    }
-
-    private renderBook() {
+    // New helper to centralize rendering logic
+    private async renderBookAndDisplay() {
         if (!this.book || !this.containerRef) return;
+        
+        // Ensure clean container
+        this.containerRef.innerHTML = '';
 
         this.rendition = this.book.renderTo(this.containerRef, {
             width: '100%',
@@ -546,12 +524,101 @@ export class EpubController {
             allowScriptedContent: true
         });
 
+        this.registerThemesAndHooks();
+
+        try {
+            await this.safeDisplay(this.pendingProgress?.cfi);
+            
+            // Restore highlights AFTER successful display
+            this.restoreHighlights(this.pendingBookmarks);
+            
+            // Force resize
+            requestAnimationFrame(() => {
+                if(this.rendition) this.rendition.resize();
+            });
+
+            this.applySettings();
+            
+            // Clear pending
+            this.pendingProgress = undefined;
+            this.pendingBookmarks = [];
+
+        } catch (renderError) {
+            console.error("Render/Display failed", renderError);
+        }
+    }
+
+    // New safe display method with fallback
+    private async safeDisplay(target?: string) {
+        if (!this.rendition) return;
+
+        // Ensure spine is loaded (double check)
+        if (this.book?.loaded?.spine) {
+             await this.book.loaded.spine;
+        }
+
+        const displayTarget = target || undefined;
+
+        try {
+            await this.rendition.display(displayTarget);
+        } catch (e) {
+            console.warn(`Display failed for target '${displayTarget}', falling back. Error:`, e);
+            try {
+                await this.rendition.display();
+            } catch (retryError) {
+                console.warn("Default display failed. Retrying with index 0.", retryError);
+                try {
+                     if (this.book.spine && this.book.spine.length > 0) {
+                         const firstSection = this.book.spine.get(0);
+                         await this.rendition.display(firstSection.href);
+                     } else {
+                         throw new Error("No spine items found");
+                     }
+                } catch (finalError) {
+                    console.error("All display attempts failed.", finalError);
+                    throw finalError;
+                }
+            }
+        }
+    }
+
+    private getHighlightStyle(color: string) {
+        // Use normal blend mode with opacity to support dark mode correctly
+        // Multiply is invisible on dark backgrounds
+        return {
+            fill: color || '#FFEB3B',
+            fillOpacity: '0.4',
+            mixBlendMode: 'normal'
+        };
+    }
+
+    private restoreHighlights(bookmarks: Bookmark[]) {
+        if (!this.rendition) return;
+        bookmarks.filter(b => b.type === 'highlight').forEach(bm => {
+            try {
+                this.rendition.annotations.add(
+                    'highlight', 
+                    bm.cfi, 
+                    this.getHighlightStyle(bm.color || '#FFEB3B'), 
+                    undefined, 
+                    'highlight-' + bm.id
+                );
+            } catch (e) {
+                console.warn("Failed to restore highlight", bm.id, e);
+            }
+        });
+    }
+
+    private registerThemesAndHooks() {
+        if (!this.rendition) return;
+
         this.rendition.themes.register('light', { body: { color: '#333 !important', background: '#fff !important' } });
         this.rendition.themes.register('dark', { body: { color: '#ddd !important', background: '#111 !important' } });
         this.rendition.themes.register('sepia', { body: { color: '#5f4b32 !important', background: '#f6f1d1 !important' } });
         
+        // Removed default highlight theme override that used multiply
         this.rendition.themes.register('highlight', { 
-            '.highlight': { 'background-color': 'rgba(255, 235, 59, 0.5)' } 
+            '.highlight': { 'opacity': '1' } 
         });
         
         this.rendition.themes.register('audio-highlight', { 
@@ -592,7 +659,6 @@ export class EpubController {
 
         this.rendition.on('relocated', (location: any) => {
             this.setState({ currentCfi: location.start.cfi });
-            // TTS Auto-turn is handled in performTTSPageTurn, not here
         });
 
         this.rendition.on('selected', (cfiRange: string, contents: any) => {
@@ -641,9 +707,6 @@ export class EpubController {
                 });
             }
         });
-
-        this.applySettings();
-        this.setLayoutMode(this.settings.layoutMode);
     }
 
     public setLayoutMode(mode: 'single' | 'double') {
@@ -654,7 +717,6 @@ export class EpubController {
         }
     }
 
-    // ... (rest of methods unchanged)
     public getCurrentPercentage(): number {
         if (!this.rendition || !this.book) return 0;
         const currentLocation = this.rendition.currentLocation();
@@ -739,11 +801,14 @@ export class EpubController {
         
         // Visual annotation
         try {
-            this.rendition.annotations.add('highlight', cfiRange, {
-                fill: color,
-                fillOpacity: '0.3',
-                mixBlendMode: 'multiply'
-            }, undefined, 'highlight-' + id);
+            // Use camelCase keys for dataset compatibility
+            this.rendition.annotations.add(
+                'highlight', 
+                cfiRange, 
+                this.getHighlightStyle(color), 
+                undefined, 
+                'highlight-' + id
+            );
         } catch (e) {
             console.error("Annotation failed", e);
             // Proceed anyway to save bookmark
@@ -784,17 +849,25 @@ export class EpubController {
     }
 
     public updateBookmark(id: string, updates: Partial<Bookmark>) {
-        // If updating color of a highlight, we need to remove and re-add the annotation
         const target = this.state.bookmarks.find(b => b.id === id);
+        
+        // If updating color of a highlight, we need to remove and re-add the annotation
         if (target && target.type === 'highlight' && updates.color && updates.color !== target.color) {
             try {
+                // Ensure we remove the old annotation by CFI and type
                 this.rendition.annotations.remove(target.cfi, 'highlight');
-                this.rendition.annotations.add('highlight', target.cfi, {
-                    fill: updates.color,
-                    fillOpacity: '0.3',
-                    mixBlendMode: 'multiply'
-                }, undefined, 'highlight-' + id);
-            } catch (e) { console.warn("Update highlight failed", e); }
+                
+                // Add new annotation with updated color
+                this.rendition.annotations.add(
+                    'highlight', 
+                    target.cfi, 
+                    this.getHighlightStyle(updates.color), 
+                    undefined, 
+                    'highlight-' + id
+                );
+            } catch (e) { 
+                console.warn("Update highlight failed", e); 
+            }
         }
 
         const newBookmarks = this.state.bookmarks.map(bm => 
@@ -899,6 +972,8 @@ export class EpubController {
         this.updateThemeColors(themeToApply);
         this.setDirection(this.settings.direction);
         this.setPageDirection(this.settings.pageDirection);
+        // Fix: Force application of layout mode settings
+        this.setLayoutMode(this.settings.layoutMode);
     }
 
     public setFontSize(size: string) {
@@ -986,14 +1061,8 @@ export class EpubController {
     }
 
     public async display(target?: string) {
-        if (this.rendition) {
-            try {
-                await this.rendition.display(target);
-            } catch(e) {
-                console.warn("Display failed", e);
-                throw e; // Re-throw to handle in caller
-            }
-        }
+        // Wrapper for safeDisplay to be called from external components
+        await this.safeDisplay(target);
     }
 
     public highlightSelection() {
