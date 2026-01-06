@@ -5,7 +5,7 @@ import { Icon } from './Icon';
 import { translations } from '../lib/locales';
 import { BookmarkEditor } from './BookmarkEditor';
 import DictionaryPanel from './DictionaryPanel';
-import { Highlighter, Edit3, Settings } from 'lucide-react';
+import { Highlighter, Edit3, Settings, Quote, Scissors } from 'lucide-react';
 
 type SidebarTab = 'toc' | 'bookmarks' | 'notes';
 type DictionaryTab = 'api' | 'script' | 'web'; // Added 'web'
@@ -199,13 +199,13 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
     );
     
     // Add to Anki logic shared
-    const handleAddToAnki = async (overrideTerm?: string, overrideDef?: string, overrideSentence?: string, scriptDef?: string) => {
+    const handleAddToAnki = async (overrideTerm?: string, overrideDef?: string, overrideSentence?: string, scriptDef?: string, type: 'vocab' | 'excerpt' | 'cloze' = 'vocab') => {
          setIsAnkiAdding(true);
          let def = overrideDef || "";
          const term = overrideTerm || state.selectedText;
          const sent = overrideSentence || state.selectedSentence || term;
 
-         if (!def) {
+         if (!def && type === 'vocab') {
              if (dictTab === 'api' && state.dictionaryData) {
                  // Reuse logic from DictionaryPanel format
                  const d = state.dictionaryData;
@@ -231,9 +231,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
          // Use passed scriptDef if available (from Panel)
          if (scriptDef) def = scriptDef;
 
+         const noteData = {
+             title: state.currentBook?.title || 'Unknown',
+             author: state.currentBook?.author || 'Unknown',
+             note: '' // Optional logic to prompt for note?
+         };
+
          try {
-             await controller.current?.addToAnki(term, def, sent);
-             setState(s => ({...s, toastMessage: t.addedToAnki, dictionaryModalVisible: false}));
+             await controller.current?.addToAnki(term, def, sent, type, noteData);
+             setState(s => ({...s, toastMessage: type === 'excerpt' ? t.addedExcerpt : (type === 'cloze' ? t.addedCloze : t.addedToAnki), dictionaryModalVisible: false}));
              setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
          } catch(e: any) {
              alert(t.failed + ': ' + e.message);
@@ -353,50 +359,28 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                )}
           </div>
 
-          {/* Settings Sidebar - MATCHING LIBRARY VIEW */}
-          <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'} flex flex-col`}>
+          {/* Settings Sidebar - Synchronized with LibraryView */}
+           <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'} flex flex-col`}>
                <div className="p-5 bg-gray-50 dark:bg-gray-900 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100 border-b border-gray-100 dark:border-gray-700 shrink-0">
                    <span className="flex items-center gap-2"><Settings size={18} /> {t.settings}</span>
                    <button onClick={() => setState(s => ({ ...s, isSettingsOpen: false }))} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"><Icon name="times"/></button>
                </div>
                
                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    <div className="p-4 bg-blue-50 dark:bg-blue-900/30 rounded-lg text-sm text-blue-800 dark:text-blue-200 mb-2">
+                        {t.settings}
+                    </div>
                     
-                    {/* General Settings */}
-                    <details className="group border border-gray-200 dark:border-gray-700 rounded-lg open:bg-gray-50 dark:open:bg-gray-800/50">
-                        <summary className="flex items-center justify-between p-3 font-semibold text-sm cursor-pointer list-none text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg">
-                            <span>{t.settingsCategories.general}</span>
-                            <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-xs opacity-50" /></span>
-                        </summary>
-                        <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
-                            <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.language}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.language} onChange={(e) => updateSetting('language', e.target.value as any)}>
-                                    <option value="zh">中文</option>
-                                    <option value="en">English</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.theme}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value as any)}>
-                                    <option value="light">{t.light}</option>
-                                    <option value="dark">{t.dark}</option>
-                                    <option value="sepia">{t.sepia}</option>
-                                </select>
-                            </div>
-                        </div>
-                    </details>
-
-                    {/* Reading Settings */}
+                    {/* Basic Appearance Settings */}
                     <details className="group border border-gray-200 dark:border-gray-700 rounded-lg open:bg-gray-50 dark:open:bg-gray-800/50" open>
                         <summary className="flex items-center justify-between p-3 font-semibold text-sm cursor-pointer list-none text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg">
-                            <span>{t.settingsCategories.reading}</span>
+                            <span>{t.appearance}</span>
                             <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-xs opacity-50" /></span>
                         </summary>
-                        <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
-                             <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.fontSize}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.fontSize} onChange={(e) => updateSetting('fontSize', e.target.value)}>
+                         <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
+                            <div>
+                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-slate-400 uppercase">{t.fontSize}</label>
+                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.fontSize} onChange={(e) => updateSetting('fontSize', e.target.value)}>
                                     <option value="small">{t.small}</option>
                                     <option value="medium">{t.medium}</option>
                                     <option value="large">{t.large}</option>
@@ -404,137 +388,78 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.layout}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
+                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-slate-400 uppercase">{t.theme}</label>
+                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.theme} onChange={(e) => updateSetting('theme', e.target.value as any)}>
+                                    <option value="light">{t.light}</option>
+                                    <option value="dark">{t.dark}</option>
+                                    <option value="sepia">{t.sepia}</option>
+                                </select>
+                            </div>
+                         </div>
+                    </details>
+                    
+                    {/* Reading Settings */}
+                    <details className="group border border-gray-200 dark:border-gray-700 rounded-lg open:bg-gray-50 dark:open:bg-gray-800/50">
+                        <summary className="flex items-center justify-between p-3 font-semibold text-sm cursor-pointer list-none text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg">
+                            <span>{t.settingsCategories.reading}</span>
+                            <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-xs opacity-50" /></span>
+                        </summary>
+                        <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
+                            <div>
+                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-slate-400 uppercase">{t.layout}</label>
+                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.layoutMode} onChange={(e) => updateSetting('layoutMode', e.target.value)}>
                                     <option value="single">{t.singlePage}</option>
                                     <option value="double">{t.doublePage}</option>
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.pageDirection}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.pageDirection} onChange={(e) => updateSetting('pageDirection', e.target.value)}>
+                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-slate-400 uppercase">{t.pageDirection}</label>
+                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.pageDirection} onChange={(e) => updateSetting('pageDirection', e.target.value)}>
                                     <option value="ltr">{t.ltr}</option>
                                     <option value="rtl">{t.rtl}</option>
                                 </select>
                             </div>
-                            <div>
-                                 <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.dictionaryMode}</label>
-                                 <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.dictionaryMode || 'panel'} onChange={(e) => updateSetting('dictionaryMode', e.target.value)}>
-                                     <option value="modal">{t.modalMode}</option>
-                                     <option value="panel">{t.panelMode}</option>
-                                 </select>
-                             </div>
-                             <div>
-                                 <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.segmentationMode}</label>
-                                 <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.segmentationMode || 'browser'} onChange={(e) => updateSetting('segmentationMode', e.target.value)}>
-                                     <option value="browser">{t.segBrowser}</option>
-                                     <option value="auto">{t.segAuto}</option>
-                                 </select>
-                             </div>
-                             <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.dictionaryLang}</label>
-                                <select className="w-full p-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={tempSettings.dictionaryLanguage || 'en'} onChange={(e) => updateSetting('dictionaryLanguage', e.target.value)}>
-                                    <option value="en">English</option>
-                                    <option value="zh">Chinese</option>
-                                    <option value="ja">Japanese</option>
-                                    <option value="es">Spanish</option>
-                                    <option value="fr">French</option>
-                                    <option value="ru">Russian</option>
-                                </select>
-                            </div>
                         </div>
                     </details>
-
-                    {/* Audio & TTS */}
+                    
+                    {/* Audio Settings */}
                     <details className="group border border-gray-200 dark:border-gray-700 rounded-lg open:bg-gray-50 dark:open:bg-gray-800/50">
                         <summary className="flex items-center justify-between p-3 font-semibold text-sm cursor-pointer list-none text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg">
                             <span>{t.settingsCategories.audio}</span>
                             <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-xs opacity-50" /></span>
                         </summary>
                         <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
-                            <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+                            <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors">
                                 <input type="checkbox" checked={tempSettings.ttsEnabled} onChange={e => updateSetting('ttsEnabled', e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
-                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t.enableTTS}</span>
+                                <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t.enableTTS}</span>
                             </label>
                             {tempSettings.ttsEnabled && (
-                                 <div>
-                                     <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.voice}</label>
-                                     <select 
-                                         className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-blue-500 outline-none" 
-                                         value={tempSettings.ttsVoiceURI} 
-                                         onChange={(e) => updateSetting('ttsVoiceURI', e.target.value)}
-                                     >
-                                         <option value="">Default</option>
-                                         {state.ttsVoices.map(v => (
-                                             <option key={v.voiceURI} value={v.voiceURI}>
-                                                 {v.name} ({v.lang})
-                                             </option>
-                                         ))}
-                                     </select>
-                                     <button 
-                                       className="mt-2 w-full py-2 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-xs font-bold" 
-                                       onClick={() => controller.current?.testTTS()}
-                                   >
-                                       {t.testVoice}
-                                   </button>
-                                 </div>
+                                <div>
+                                    <label className="block text-xs font-medium mb-1.5 text-slate-500 dark:text-slate-400 uppercase">{t.voice}</label>
+                                    <select 
+                                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm dark:text-slate-200 focus:ring-2 focus:ring-blue-500 outline-none" 
+                                        value={tempSettings.ttsVoiceURI} 
+                                        onChange={(e) => updateSetting('ttsVoiceURI', e.target.value)}
+                                    >
+                                        <option value="">Default</option>
+                                        {state.ttsVoices.map(v => (
+                                            <option key={v.voiceURI} value={v.voiceURI}>
+                                                {v.name} ({v.lang})
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button 
+                                        className="mt-2 w-full py-2 bg-slate-200 dark:bg-slate-700 rounded hover:bg-slate-300 dark:hover:bg-slate-600 transition-colors text-xs font-bold dark:text-slate-200" 
+                                        onClick={() => controller.current?.testTTS()}
+                                    >
+                                        {t.testVoice}
+                                    </button>
+                                </div>
                             )}
-                            <label className="flex items-center space-x-3 cursor-pointer p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
-                                <input type="checkbox" checked={tempSettings.autoPlayAudio} onChange={e => updateSetting('autoPlayAudio', e.target.checked)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500" />
-                                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t.autoPlay}</span>
-                            </label>
                             <div>
-                                <label className="block text-xs font-medium mb-1.5 text-gray-500 dark:text-gray-400 uppercase">{t.volume}</label>
-                                <input type="range" min="0" max="100" value={tempSettings.audioVolume} onChange={e => updateSetting('audioVolume', parseInt(e.target.value))} className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"/>
+                                <label className="block text-xs font-medium mb-1.5 text-slate-500 dark:text-slate-400 uppercase">{t.volume}</label>
+                                <input type="range" min="0" max="100" value={tempSettings.audioVolume} onChange={e => updateSetting('audioVolume', parseInt(e.target.value))} className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700"/>
                             </div>
-                        </div>
-                    </details>
-
-                    {/* Integrations (Anki) */}
-                    <details className="group border border-gray-200 dark:border-gray-700 rounded-lg open:bg-gray-50 dark:open:bg-gray-800/50">
-                        <summary className="flex items-center justify-between p-3 font-semibold text-sm cursor-pointer list-none text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg">
-                            <span>{t.settingsCategories.anki}</span>
-                            <span className="transition-transform group-open:rotate-180"><Icon name="chevron-down" className="text-xs opacity-50" /></span>
-                        </summary>
-                        <div className="p-3 pt-0 space-y-3 border-t border-gray-100 dark:border-gray-700 mt-2">
-                            <div className="flex gap-2">
-                                <input className="flex-1 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm" placeholder={t.host} value={tempAnki.host} onChange={e => {
-                                   const v = { ...tempAnki, host: e.target.value };
-                                   setTempAnki(v);
-                                   if (controller && controller.current) controller.current.ankiSettings = v;
-                                }}/>
-                                <input className="w-20 p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm" type="number" placeholder={t.port} value={tempAnki.port} onChange={e => {
-                                   const v = { ...tempAnki, port: parseInt(e.target.value) };
-                                   setTempAnki(v);
-                                   if (controller && controller.current) controller.current.ankiSettings = v;
-                                }}/>
-                            </div>
-                            <button className="w-full py-2 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-sm font-medium" onClick={() => controller?.current?.testAnki()}>{t.testConnection}</button>
-                            {state.ankiConnected && (
-                               <div className="space-y-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-                                    <select className="w-full p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm" value={tempAnki.deck} onChange={e => {
-                                       const v = { ...tempAnki, deck: e.target.value };
-                                       setTempAnki(v);
-                                       if (controller.current) controller.current.ankiSettings = v;
-                                    }}>
-                                       <option value="">{t.selectDeck}</option>
-                                       {state.ankiDecks.map(d => <option key={d} value={d}>{d}</option>)}
-                                    </select>
-                                    
-                                    <select className="w-full p-2 border rounded-lg dark:bg-gray-900 dark:border-gray-700 text-sm" value={tempAnki.model} onChange={e => {
-                                       const v = { ...tempAnki, model: e.target.value };
-                                       setTempAnki(v);
-                                       if (controller.current) {
-                                           controller.current.ankiSettings = v;
-                                           controller.current.loadAnkiFields(e.target.value);
-                                       }
-                                    }}>
-                                       <option value="">{t.selectModel}</option>
-                                       {state.ankiModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                    </select>
-                                    <button className="w-full py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors" onClick={() => controller.current?.saveAnkiSettings()}>{t.saveAnkiSettings}</button>
-                               </div>
-                            )}
                         </div>
                     </details>
                </div>
@@ -665,17 +590,40 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   <Icon name="copy" />
               </button>
               
-              <button 
-                className={`p-2 rounded transition-colors ${isAnkiAdding ? 'bg-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'}`}
-                title={t.addToAnki} 
-                disabled={isAnkiAdding}
-                onClick={async (e) => {
-                    e.stopPropagation();
-                    await handleAddToAnki();
-                }}
-              >
-                  {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus-square" />}
-              </button>
+              <div className="w-px h-6 bg-gray-600 mx-1"></div>
+
+              {/* Anki Actions - Expanded */}
+              <div className="flex gap-1">
+                  <button 
+                    className={`p-2 rounded transition-colors ${isAnkiAdding ? 'bg-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'}`}
+                    title={t.addToAnki} 
+                    disabled={isAnkiAdding}
+                    onClick={async (e) => { e.stopPropagation(); await handleAddToAnki(undefined, undefined, undefined, undefined, 'vocab'); }}
+                  >
+                      {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus-square" />}
+                  </button>
+                  {state.ankiConnected && tempAnki.excerptDeck && (
+                      <button 
+                        className={`p-2 rounded transition-colors ${isAnkiAdding ? 'bg-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'}`}
+                        title={t.addExcerpt}
+                        disabled={isAnkiAdding}
+                        onClick={async (e) => { e.stopPropagation(); await handleAddToAnki(undefined, undefined, undefined, undefined, 'excerpt'); }}
+                      >
+                          <Quote size={16} />
+                      </button>
+                  )}
+                  {state.ankiConnected && tempAnki.clozeDeck && (
+                      <button 
+                        className={`p-2 rounded transition-colors ${isAnkiAdding ? 'bg-gray-600 cursor-not-allowed' : 'hover:bg-gray-700'}`}
+                        title={t.addCloze}
+                        disabled={isAnkiAdding}
+                        onClick={async (e) => { e.stopPropagation(); await handleAddToAnki(undefined, undefined, undefined, undefined, 'cloze'); }}
+                      >
+                          <Scissors size={16} />
+                      </button>
+                  )}
+              </div>
+
               <button 
                 className="p-2 hover:bg-gray-700 rounded transition-colors" 
                 title="Jump Audio" 
@@ -742,7 +690,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                           <button 
                             className={`px-4 py-2 rounded text-white flex items-center gap-2 ${state.ankiConnected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
                             disabled={!state.ankiConnected || isAnkiAdding}
-                            onClick={() => handleAddToAnki()}
+                            onClick={() => handleAddToAnki(undefined, undefined, undefined, undefined, 'vocab')}
                           >
                               {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus"/>}
                               {t.addToAnki}
@@ -761,7 +709,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
               word={state.selectedText}
               sentence={state.selectedSentence || state.selectedText}
               learningLanguage={tempSettings.dictionaryLanguage || 'en'}
-              onAddToAnki={(word, def, sent, scriptDef) => handleAddToAnki(word, def, sent, scriptDef)}
+              onAddToAnki={(word, def, sent, scriptDef) => handleAddToAnki(word, def, sent, scriptDef, 'vocab')}
               isAddingToAnki={isAnkiAdding}
               canAppend={true}
               onAppendNext={(newTerm) => {

@@ -46,13 +46,29 @@ export interface NavigationItem {
 export interface AnkiSettings {
     host: string;
     port: number;
-    deck: string;
-    model: string;
-    wordField?: string; // Optional
-    meaningField?: string; // Optional
-    sentenceField?: string; // Optional
-    audioField?: string; // New: Optional Audio Field
     tagsField: string;
+
+    // Vocabulary (Legacy fields mapped to these)
+    vocabDeck: string;
+    vocabModel: string;
+    vocabWordField: string;
+    vocabMeaningField: string;
+    vocabSentenceField: string;
+    vocabAudioField: string;
+
+    // Excerpt
+    excerptDeck: string;
+    excerptModel: string;
+    excerptContentField: string;
+    excerptSourceField: string;
+    excerptNoteField: string;
+
+    // Cloze
+    clozeDeck: string;
+    clozeModel: string;
+    clozeContentField: string;
+    clozeSourceField: string;
+    clozeNoteField: string;
 }
 
 // Dictionary Response Types
@@ -147,7 +163,7 @@ export interface ReaderState {
     ankiConnected: boolean;
     ankiDecks: string[];
     ankiModels: string[];
-    ankiFields: string[];
+    ankiFields: string[]; // Used for currently selected model in settings
 
     // UI Feedback
     toastMessage: string | null;
@@ -180,13 +196,26 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
     host: '127.0.0.1',
     port: 8765,
-    deck: '',
-    model: '',
-    wordField: '',
-    meaningField: '',
-    sentenceField: '',
-    audioField: '',
-    tagsField: 'epub-reader'
+    tagsField: 'epub-reader',
+    
+    vocabDeck: '',
+    vocabModel: '',
+    vocabWordField: '',
+    vocabMeaningField: '',
+    vocabSentenceField: '',
+    vocabAudioField: '',
+
+    excerptDeck: '',
+    excerptModel: '',
+    excerptContentField: '',
+    excerptSourceField: '',
+    excerptNoteField: '',
+
+    clozeDeck: '',
+    clozeModel: '',
+    clozeContentField: '',
+    clozeSourceField: '',
+    clozeNoteField: ''
 };
 
 declare global {

@@ -13,7 +13,9 @@ export const translations = {
         bookmarkColor: "Color",
         save: "Save",
         cancel: "Cancel",
-        exportNotes: "Export Notes (Markdown)",
+        exportNotes: "Export Notes",
+        exportMarkdownPretty: "Pretty Markdown",
+        exportMarkdownAnki: "Anki Import Format",
         noTOC: "No Table of Contents",
         uploadTitle: "Upload EPUB",
         uploadDesc: "Drag & drop or click to select",
@@ -98,13 +100,36 @@ export const translations = {
         segBrowser: "Browser (Intl)",
         segAuto: "Auto / Simple",
         appendNext: "Append Next",
+        editBook: "Edit Book",
+        bookTitle: "Book Title",
+        coverImage: "Cover Image",
+        changeCover: "Change Cover",
+        downloadCover: "Download Cover",
+        exportData: "Export Data (JSON)",
+        importData: "Import Data",
+        dataImported: "Data Imported Successfully!",
         settingsCategories: {
             general: "General",
             appearance: "Appearance",
             reading: "Reading",
             audio: "Audio & TTS",
             anki: "Anki Integration"
-        }
+        },
+        ankiConfigType: "Card Type",
+        ankiTypes: {
+            vocab: "Vocabulary",
+            excerpt: "Excerpt",
+            cloze: "Cloze"
+        },
+        ankiFields: {
+            content: "Content Field",
+            source: "Source Field",
+            note: "Note Field"
+        },
+        addExcerpt: "Add Excerpt Card",
+        addCloze: "Add Cloze Card",
+        addedExcerpt: "Excerpt Added!",
+        addedCloze: "Cloze Added!"
     },
     zh: {
         tableOfContents: "目录",
@@ -119,7 +144,9 @@ export const translations = {
         bookmarkColor: "标记颜色",
         save: "保存",
         cancel: "取消",
-        exportNotes: "导出笔记 (Markdown)",
+        exportNotes: "导出笔记",
+        exportMarkdownPretty: "美观 Markdown",
+        exportMarkdownAnki: "Anki 导入格式",
         noTOC: "暂无目录",
         uploadTitle: "上传 EPUB",
         uploadDesc: "拖拽或点击选择文件",
@@ -204,13 +231,36 @@ export const translations = {
         segBrowser: "浏览器分词 (Intl)",
         segAuto: "自动 / 简单",
         appendNext: "追加分词",
+        editBook: "编辑书籍",
+        bookTitle: "书籍标题",
+        coverImage: "封面图片",
+        changeCover: "更换封面",
+        downloadCover: "下载封面",
+        exportData: "导出数据 (JSON)",
+        importData: "导入数据",
+        dataImported: "数据导入成功！",
         settingsCategories: {
             general: "通用设置",
             appearance: "外观显示",
             reading: "阅读偏好",
             audio: "音频与朗读",
             anki: "Anki 记忆卡片"
-        }
+        },
+        ankiConfigType: "卡片类型",
+        ankiTypes: {
+            vocab: "生词卡",
+            excerpt: "摘录卡",
+            cloze: "填空卡"
+        },
+        ankiFields: {
+            content: "内容字段",
+            source: "来源字段",
+            note: "笔记字段"
+        },
+        addExcerpt: "添加到摘录卡",
+        addCloze: "制作填空卡",
+        addedExcerpt: "已添加摘录!",
+        addedCloze: "已添加填空!"
     }
 };
 

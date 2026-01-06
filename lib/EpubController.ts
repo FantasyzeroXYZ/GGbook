@@ -1,5 +1,5 @@
 
-import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark, DictionaryResponse } from '../types';
+import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, ReaderState, BookProgress, Bookmark, DictionaryResponse } from '../types';
 import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
@@ -80,7 +80,28 @@ export class EpubController {
         if (!this.settings.segmentationMode) this.settings.segmentationMode = 'browser';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
-        this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
+        if (savedAnki) {
+            const parsed = JSON.parse(savedAnki);
+            // Migration logic for old settings
+            if ('deck' in parsed && !parsed.vocabDeck) {
+                this.ankiSettings = {
+                    ...DEFAULT_ANKI_SETTINGS,
+                    host: parsed.host || DEFAULT_ANKI_SETTINGS.host,
+                    port: parsed.port || DEFAULT_ANKI_SETTINGS.port,
+                    vocabDeck: parsed.deck,
+                    vocabModel: parsed.model,
+                    vocabWordField: parsed.wordField || '',
+                    vocabMeaningField: parsed.meaningField || '',
+                    vocabSentenceField: parsed.sentenceField || '',
+                    vocabAudioField: parsed.audioField || '',
+                    tagsField: parsed.tagsField || 'epub-reader'
+                };
+            } else {
+                this.ankiSettings = { ...DEFAULT_ANKI_SETTINGS, ...parsed };
+            }
+        } else {
+            this.ankiSettings = { ...DEFAULT_ANKI_SETTINGS };
+        }
 
         this.audioPlayer = new Audio();
         this.audioPlayer.crossOrigin = "anonymous";
@@ -881,6 +902,10 @@ export class EpubController {
         else this.setState({ isAudioPlaying: false });
     }
 
+    public toggleAudioList() {
+        this.setState({ showAudioList: !this.state.showAudioList });
+    }
+
     public stopAudio() {
         if (this.synth.speaking) this.synth.cancel();
         this.isTTSActive = false; this.ttsQueue = []; this.removeTTSHighlights();
@@ -1077,22 +1102,51 @@ export class EpubController {
         const json = await res.json(); if (json.error) throw new Error(json.error); return json.result;
     }
 
-    public async addToAnki(word: string, meaning: string, sentence: string) {
-        const { deck, model, wordField, meaningField, sentenceField, audioField, tagsField } = this.ankiSettings;
-        const fields: any = {};
-        if (wordField) fields[wordField] = word; if (meaningField) fields[meaningField] = meaning;
-        if (sentenceField) fields[sentenceField] = sentence.replace(new RegExp(`(${word})`, 'gi'), '<b>$1</b>');
-        const note: any = { deckName: deck, modelName: model, fields, tags: tagsField.split(',').map(t => t.trim()) };
-        if (audioField && this.currentAudioFile) {
-            try {
-                const frags = this.audioGroups.get(this.currentAudioFile);
-                const current = frags?.find(f => this.audioPlayer.currentTime >= this.parseTime(f.clipBegin) && this.audioPlayer.currentTime < this.parseTime(f.clipEnd));
-                if (current) {
-                    const { base64, extension } = await this.captureAudioSegment(this.parseTime(current.clipBegin), this.parseTime(current.clipEnd));
-                    note.audio = [{ url: "", data: base64, filename: `anki_${Date.now()}.${extension}`, fields: [audioField] }];
-                }
-            } catch (e) {}
+    public async addToAnki(word: string, meaning: string, sentence: string, type: 'vocab' | 'excerpt' | 'cloze' = 'vocab', noteData?: { title: string, author: string, note?: string }) {
+        const { tagsField } = this.ankiSettings;
+        let deck = '', model = '', fields: any = {};
+        const tags = tagsField.split(',').map(t => t.trim());
+
+        if (type === 'vocab') {
+            deck = this.ankiSettings.vocabDeck;
+            model = this.ankiSettings.vocabModel;
+            const { vocabWordField, vocabMeaningField, vocabSentenceField, vocabAudioField } = this.ankiSettings;
+            if (vocabWordField) fields[vocabWordField] = word; 
+            if (vocabMeaningField) fields[vocabMeaningField] = meaning;
+            if (vocabSentenceField) fields[vocabSentenceField] = sentence.replace(new RegExp(`(${word})`, 'gi'), '<b>$1</b>');
+
+            // Audio attachment logic mainly for vocab
+            if (vocabAudioField && this.currentAudioFile) {
+                try {
+                    const frags = this.audioGroups.get(this.currentAudioFile);
+                    const current = frags?.find(f => this.audioPlayer.currentTime >= this.parseTime(f.clipBegin) && this.audioPlayer.currentTime < this.parseTime(f.clipEnd));
+                    if (current) {
+                        const { base64, extension } = await this.captureAudioSegment(this.parseTime(current.clipBegin), this.parseTime(current.clipEnd));
+                        const note: any = { deckName: deck, modelName: model, fields, tags, audio: [{ url: "", data: base64, filename: `anki_${Date.now()}.${extension}`, fields: [vocabAudioField] }] };
+                        return await this.ankiRequest('addNote', { note });
+                    }
+                } catch (e) {}
+            }
+        } else if (type === 'excerpt') {
+            deck = this.ankiSettings.excerptDeck;
+            model = this.ankiSettings.excerptModel;
+            const { excerptContentField, excerptSourceField, excerptNoteField } = this.ankiSettings;
+            
+            if (excerptContentField) fields[excerptContentField] = word; // Here 'word' is the highlighted text
+            if (excerptSourceField && noteData) fields[excerptSourceField] = `${noteData.title} - ${noteData.author}`;
+            if (excerptNoteField && noteData?.note) fields[excerptNoteField] = noteData.note;
+            
+        } else if (type === 'cloze') {
+            deck = this.ankiSettings.clozeDeck;
+            model = this.ankiSettings.clozeModel;
+            const { clozeContentField, clozeSourceField, clozeNoteField } = this.ankiSettings;
+            
+            if (clozeContentField) fields[clozeContentField] = word; // Raw text, user might need to edit for {{c1::}} or we assume they used highlighter to mark it
+            if (clozeSourceField && noteData) fields[clozeSourceField] = `${noteData.title} - ${noteData.author}`;
+            if (clozeNoteField && noteData?.note) fields[clozeNoteField] = noteData.note;
         }
+
+        const note: any = { deckName: deck, modelName: model, fields, tags };
         return await this.ankiRequest('addNote', { note });
     }
     
