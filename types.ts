@@ -98,6 +98,7 @@ export interface AppSettings {
     dictionaryMode: 'modal' | 'panel';
     // Library Settings
     libraryLayout: 'grid' | 'list'; // New: Library display mode
+    segmentationMode: 'browser' | 'auto'; // New: Segmentation config
 }
 
 export interface ReaderState {
@@ -171,8 +172,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     audioVolume: 80,
     ttsEnabled: false,
     ttsVoiceURI: '',
-    dictionaryMode: 'panel',
-    libraryLayout: 'grid'
+    dictionaryMode: 'modal', // Default is Center Modal
+    libraryLayout: 'grid',
+    segmentationMode: 'browser'
 };
 
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {

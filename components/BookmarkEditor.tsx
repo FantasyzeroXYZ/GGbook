@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Bookmark } from '../types';
 import { translations, Language } from '../lib/locales';
@@ -11,6 +12,7 @@ interface BookmarkEditorProps {
     isDarkMode: boolean;
 }
 
+// These colors MUST match COLOR_CLASSES in EpubController.ts
 const COLORS = [
     { name: 'Yellow', value: '#FFEB3B' },
     { name: 'Red', value: '#FF5252' },
@@ -71,7 +73,7 @@ export const BookmarkEditor: React.FC<BookmarkEditorProps> = ({ bookmark, onSave
                                 <button
                                     key={c.value}
                                     onClick={() => setColor(c.value)}
-                                    className={`w-8 h-8 rounded-full transition-transform hover:scale-110 flex items-center justify-center shadow-sm ${color === c.value ? 'ring-2 ring-offset-2 ring-blue-500 dark:ring-offset-gray-800' : ''}`}
+                                    className={`w-8 h-8 rounded-full transition-transform hover:scale-110 flex items-center justify-center shadow-sm border-2 ${color === c.value ? 'border-gray-500 scale-110' : 'border-transparent'}`}
                                     style={{ backgroundColor: c.value }}
                                     title={c.name}
                                 >
@@ -89,23 +91,21 @@ export const BookmarkEditor: React.FC<BookmarkEditorProps> = ({ bookmark, onSave
                             placeholder={t.notePlaceholder}
                             value={note}
                             onChange={(e) => setNote(e.target.value)}
-                            // Prevent auto-focus on mobile to avoid keyboard popup
-                            autoFocus={false}
                         />
                     </div>
                 </div>
 
                 {/* Footer Buttons */}
-                <div className={`p-4 border-t flex gap-3 shrink-0 ${isDarkMode ? 'border-gray-700 bg-gray-900' : 'border-gray-100 bg-gray-50'}`}>
+                <div className={`px-4 py-3 border-t flex justify-end gap-2 shrink-0 ${isDarkMode ? 'border-gray-700 bg-gray-900' : 'border-gray-100 bg-gray-50'}`}>
                     <button 
                         onClick={onCancel}
-                        className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${isDarkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-200 hover:bg-gray-300 text-gray-800'}`}
+                        className="px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700 rounded transition-colors"
                     >
                         {t.cancel}
                     </button>
                     <button 
                         onClick={handleSave}
-                        className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                        className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded transition-colors shadow-sm"
                     >
                         {t.save}
                     </button>

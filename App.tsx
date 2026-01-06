@@ -206,6 +206,8 @@ export default function App() {
               controller.current.setPageDirection(val);
           } else if (key === 'ttsVoiceURI') {
               controller.current.setTTSVoice(val);
+          } else if (key === 'segmentationMode') {
+              controller.current.setSegmentationMode(val);
           }
       }
   };
@@ -258,9 +260,14 @@ export default function App() {
       }
   };
 
-  const openBook = async (book: LibraryBook) => {
+  const openBook = async (bookFromList: LibraryBook) => {
       setState(s => ({ ...s, isLoading: true, loadingMessage: t.opening }));
       try {
+          // IMPORTANT: Fetch latest data from DB to ensure progress and bookmarks are up-to-date
+          // This fixes the persistence issue where outdated list data might overwrite saved progress
+          const latestBooks = await db.getAllBooks();
+          const book = latestBooks.find(b => b.id === bookFromList.id) || bookFromList;
+
           const fileBlob = await db.getBookFile(book.id);
           if (fileBlob) {
               setCurrentBookId(book.id);
@@ -285,7 +292,23 @@ export default function App() {
       await refreshLibrary();
   };
 
-  const exitReader = () => {
+  const exitReader = async () => {
+      // Force save progress before destroying controller
+      if (controller.current && currentBookId) {
+          const percentage = controller.current.getCurrentPercentage();
+          const currentCfi = controller.current.state.currentCfi || state.currentCfi;
+          if (currentCfi) {
+             const progress: BookProgress = {
+                 cfi: currentCfi,
+                 percentage,
+                 audioSrc: state.currentAudioFile || undefined,
+                 audioTime: state.audioCurrentTime,
+                 timestamp: Date.now()
+             };
+             await db.updateBookProgress(currentBookId, progress);
+          }
+      }
+
       controller.current?.destroy();
       setView('library');
       setState(s => ({ ...s, currentBook: null }));

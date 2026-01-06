@@ -1,3 +1,4 @@
+
 import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark, DictionaryResponse } from '../types';
 import { translations, Language } from './locales';
 
@@ -24,8 +25,8 @@ const COLOR_VALUES: Record<string, string> = {
 export class EpubController {
     // 内部状态
     private book: any = null;
-    private rendition: any = null;
-    private state: ReaderState;
+    public rendition: any = null; // Made public for easier access if needed
+    public state: ReaderState;
     private updateReactState: StateUpdater;
     
     // 初始化队列
@@ -48,8 +49,8 @@ export class EpubController {
     private ttsUtterance: SpeechSynthesisUtterance | null = null;
     private ttsQueue: string[] = [];
     private isTTSActive: boolean = false;
-    private isTurningPage: boolean = false; // Flag to prevent multiple turns
-    private currentPageSentences: string[] = []; // 存储当前页的所有句子
+    private isTurningPage: boolean = false; 
+    private currentPageSentences: string[] = []; 
 
     // 音频处理 (MediaRecorder 方案)
     private mediaElementSource: MediaElementAudioSourceNode | null = null;
@@ -74,8 +75,9 @@ export class EpubController {
         if (!this.settings.direction) this.settings.direction = 'horizontal';
         if (!this.settings.pageDirection) this.settings.pageDirection = 'ltr';
         if (this.settings.ttsEnabled === undefined) this.settings.ttsEnabled = false;
-        if (!this.settings.dictionaryMode) this.settings.dictionaryMode = 'panel';
+        if (!this.settings.dictionaryMode) this.settings.dictionaryMode = 'modal'; 
         if (!this.settings.libraryLayout) this.settings.libraryLayout = 'grid';
+        if (!this.settings.segmentationMode) this.settings.segmentationMode = 'browser';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
@@ -83,10 +85,8 @@ export class EpubController {
         this.audioPlayer = new Audio();
         this.audioPlayer.crossOrigin = "anonymous";
         
-        // Initialize TTS
         this.synth = window.speechSynthesis;
         
-        // Fix: Robust voice loading
         this.loadVoices();
         if (this.synth.onvoiceschanged !== undefined) {
             this.synth.onvoiceschanged = () => this.loadVoices();
@@ -95,11 +95,9 @@ export class EpubController {
         this.bindAudioEvents();
         this.setVolume(this.settings.audioVolume / 100);
 
-        // Bind script handler
         this.handleScriptMessage = this.handleScriptMessage.bind(this);
         window.addEventListener('message', this.handleScriptMessage);
         
-        // 初始主题应用
         if (this.settings.darkMode) {
             document.body.style.backgroundColor = '#111827';
         } else {
@@ -122,7 +120,7 @@ export class EpubController {
 
     private t(key: keyof typeof translations['en']) {
         const lang = this.settings.language || 'zh';
-        return translations[lang][key];
+        return translations[lang][key] as string;
     }
 
     private loadVoices() {
@@ -214,11 +212,9 @@ export class EpubController {
     private playNextTTS() {
         if (!this.isTTSActive) { this.stopAudio(); return; }
         
-        // 确保只在当前页所有句子都朗读完后再翻页
         if (this.ttsQueue.length === 0) {
             this.removeTTSHighlights();
             if (!this.isTurningPage) {
-                // 检查是否还有更多页面内容需要朗读
                 const hasMorePages = this.checkForMorePages();
                 if (hasMorePages) {
                     this.performTTSPageTurn();
@@ -235,8 +231,6 @@ export class EpubController {
         const contents = this.rendition.getContents()[0];
         if (contents) {
             try {
-                // Capture scroll position BEFORE finding/wrapping text.
-                // In paginated mode, scrolling leads to the "split view" glitch.
                 const managerContainer = this.rendition.manager?.container;
                 const scrollLeft = managerContainer ? managerContainer.scrollLeft : 0;
                 const scrollTop = managerContainer ? managerContainer.scrollTop : 0;
@@ -248,13 +242,10 @@ export class EpubController {
                     const range = sel.getRangeAt(0);
                     const span = contents.document.createElement('span');
                     span.className = 'audio-highlight';
-                    // Fallback style
                     span.style.backgroundColor = 'rgba(255, 255, 0, 0.4)'; 
                     try {
                         range.surroundContents(span);
                         
-                        // CRITICAL: Force reset scroll position immediately after DOM manipulation
-                        // This prevents the browser from auto-scrolling to the new span if it spans across columns
                         if (managerContainer) {
                             managerContainer.scrollLeft = scrollLeft;
                             managerContainer.scrollTop = scrollTop;
@@ -292,12 +283,10 @@ export class EpubController {
 
         try {
             await this.rendition.next();
-            // Force layout sync
             this.syncLayout();
             
             setTimeout(() => {
                 this.isTurningPage = false;
-                // Resume reading on new page
                 if (this.isTTSActive) this.playCurrentPageTTS();
             }, 1000); 
         } catch(e) { 
@@ -444,12 +433,17 @@ export class EpubController {
         
         this.rendition.on('displayed', () => {
             this.syncLayout();
+            if (this.state.bookmarks && this.state.bookmarks.length > 0) {
+                this.restoreHighlights(this.state.bookmarks);
+            }
             setTimeout(() => this.syncLayout(), 500);
         });
 
         try {
             await this.safeDisplay(this.pendingProgress?.cfi);
-            this.restoreHighlights(this.pendingBookmarks);
+            if (this.pendingBookmarks.length > 0) {
+                this.restoreHighlights(this.pendingBookmarks);
+            }
             this.applySettings();
             this.pendingProgress = undefined;
             this.pendingBookmarks = [];
@@ -472,23 +466,23 @@ export class EpubController {
         }
     }
 
-    // Helper for restoring highlights - FIXED: Correctly pass className
     private restoreHighlights(bookmarks: Bookmark[]) {
         if (!this.rendition) return;
-        bookmarks.filter(b => b.type === 'highlight').forEach(bm => {
-            const color = bm.color || '#FFEB3B';
-            try {
-                // 使用自定义方法添加高亮，而不是直接使用 annotations.add
+        const highlights = bookmarks.filter(b => b.type === 'highlight');
+        
+        // Use a short timeout to ensure epub.js views are ready
+        setTimeout(() => {
+            highlights.forEach(bm => {
+                const color = bm.color || '#FFEB3B';
                 this.addHighlightWithCustomColor(bm.cfi, color, bm.text || '');
-            } catch (e) { console.error('Failed to restore highlight:', e); }
-        });
+            });
+        }, 300);
     }
 
     private registerThemesAndHooks() {
         if (!this.rendition) return;
 
-        // 1. GLOBAL CSS SHUFFLE: Forcefully override epub.js defaults
-        // This is crucial to neutralize the yellow background
+        // Force base transparent
         this.rendition.themes.default({
             '.epubjs-hl': { 
                 'fill': 'transparent !important', 
@@ -504,15 +498,13 @@ export class EpubController {
              const style = contents.document.createElement('style');
              style.id = 'epub-reader-custom-style';
              
-             // 2. CUSTOM COLOR DEFINITIONS: Inject detailed rules with high specificity
-             // This targets the SVG internals created by epub.js annotations
+             // Ensure specificity for children of .epubjs-hl to override inline styles
              let css = `
                 html, body { -webkit-touch-callout: none !important; -webkit-user-select: text !important; user-select: text !important; pointer-events: auto !important; height: 100% !important; }
                 iframe { pointer-events: auto !important; }
                 rt { user-select: none !important; -webkit-user-select: none !important; }
                 ::selection { background: rgba(59, 130, 246, 0.3); }
                 
-                /* Audio Highlight with break-inside avoid to help pagination */
                 .audio-highlight { 
                     background-color: rgba(255, 255, 0, 0.4) !important; 
                     border-radius: 2px; 
@@ -520,63 +512,16 @@ export class EpubController {
                     box-decoration-break: clone;
                 }
 
-                /* Force reset default highlight */
+                /* Base highlight transparent */
                 .epubjs-hl { fill: transparent !important; background: transparent !important; }
                 
-                /* --- CUSTOM COLOR CLASSES --- */
-                /* 修复：直接设置 SVG 元素的 fill 和 stroke 属性 */
-                .epubjs-hl.hl-yellow { 
-                    fill: #FFEB3B !important; 
-                    stroke: #FFEB3B !important;
-                }
+                /* Target specific children for fill, using !important to override inline styles */
+                .epubjs-hl.hl-yellow, .epubjs-hl.hl-yellow * { fill: #FFEB3B !important; fill-opacity: 0.4 !important; mix-blend-mode: multiply !important; }
+                .epubjs-hl.hl-red, .epubjs-hl.hl-red * { fill: #FF5252 !important; fill-opacity: 0.3 !important; mix-blend-mode: multiply !important; }
+                .epubjs-hl.hl-green, .epubjs-hl.hl-green * { fill: #69F0AE !important; fill-opacity: 0.4 !important; mix-blend-mode: multiply !important; }
+                .epubjs-hl.hl-blue, .epubjs-hl.hl-blue * { fill: #448AFF !important; fill-opacity: 0.3 !important; mix-blend-mode: multiply !important; }
+                .epubjs-hl.hl-purple, .epubjs-hl.hl-purple * { fill: #E040FB !important; fill-opacity: 0.3 !important; mix-blend-mode: multiply !important; }
                 
-                .epubjs-hl.hl-red { 
-                    fill: #FF5252 !important; 
-                    stroke: #FF5252 !important;
-                }
-                
-                .epubjs-hl.hl-green { 
-                    fill: #69F0AE !important; 
-                    stroke: #69F0AE !important;
-                }
-                
-                .epubjs-hl.hl-blue { 
-                    fill: #448AFF !important; 
-                    stroke: #448AFF !important;
-                }
-                
-                .epubjs-hl.hl-purple { 
-                    fill: #E040FB !important; 
-                    stroke: #E040FB !important;
-                }
-                
-                /* 针对文本背景高亮（备用方案） */
-                .custom-highlight-yellow { 
-                    background-color: rgba(255, 235, 59, 0.3) !important; 
-                    border-radius: 2px;
-                }
-                
-                .custom-highlight-red { 
-                    background-color: rgba(255, 82, 82, 0.3) !important; 
-                    border-radius: 2px;
-                }
-                
-                .custom-highlight-green { 
-                    background-color: rgba(105, 240, 174, 0.3) !important; 
-                    border-radius: 2px;
-                }
-                
-                .custom-highlight-blue { 
-                    background-color: rgba(68, 138, 255, 0.3) !important; 
-                    border-radius: 2px;
-                }
-                
-                .custom-highlight-purple { 
-                    background-color: rgba(224, 64, 251, 0.3) !important; 
-                    border-radius: 2px;
-                }
-                
-                /* Constraints to minimize splitting */
                 p, div, blockquote { 
                     break-inside: avoid; 
                     page-break-inside: avoid;
@@ -683,6 +628,11 @@ export class EpubController {
         this.settings.libraryLayout = layout;
         this.saveSettings();
     }
+    
+    public setSegmentationMode(mode: 'browser' | 'auto') {
+        this.settings.segmentationMode = mode;
+        this.saveSettings();
+    }
 
     public async addBookmark() {
         if (!this.rendition) return;
@@ -700,73 +650,19 @@ export class EpubController {
         return null;
     }
 
-    // 修复高亮颜色问题的新方法
     private async addHighlightWithCustomColor(cfiRange: string, color: string, text: string): Promise<Bookmark | null> {
         if (!this.rendition || !cfiRange) return null;
         
         const id = Date.now().toString();
         const className = COLOR_CLASSES[color] || 'hl-yellow';
-        const colorValue = COLOR_VALUES[color] || '#FFEB3B';
-        const customHighlightClass = `custom-highlight-${className.replace('hl-', '')}`;
         
         try {
-            // 方法1: 使用 epub.js 的 annotations.add 方法
+            // Using epub.js annotations.add with the className argument.
+            // This applies the class to the annotation element (usually a <g> or <rect>).
+            // The CSS injection then handles styling based on this class.
             this.rendition.annotations.add('highlight', cfiRange, {}, undefined, className);
-            
-            // 方法2: 延迟查找并修改 SVG 元素的颜色
-            setTimeout(() => {
-                const contents = this.rendition.getContents()[0];
-                if (contents) {
-                    // 查找所有 .epubjs-hl 元素并添加颜色类
-                    const svgHighlights = contents.document.querySelectorAll('.epubjs-hl');
-                    svgHighlights.forEach((svg: Element) => {
-                        // 添加颜色类名
-                        svg.classList.add(className);
-                        
-                        // 直接设置 SVG 元素的 fill 和 stroke 属性
-                        const paths = svg.querySelectorAll('path, rect, polygon');
-                        paths.forEach((path: Element) => {
-                            (path as HTMLElement).style.fill = colorValue;
-                            (path as HTMLElement).style.stroke = colorValue;
-                        });
-                    });
-                }
-            }, 100);
-            
-            // 方法3: 添加自定义背景高亮作为备份
-            try {
-                const contents = this.rendition.getContents()[0];
-                if (contents) {
-                    const range = contents.range(cfiRange);
-                    if (range) {
-                        const span = contents.document.createElement('span');
-                        span.className = customHighlightClass;
-                        span.setAttribute('data-cfi', cfiRange);
-                        range.surroundContents(span);
-                    }
-                }
-            } catch (e) {
-                console.error('Failed to add custom background highlight:', e);
-            }
-            
         } catch (e) { 
             console.error('Failed to add highlight:', e); 
-            
-            // 如果 epub.js 方法失败，使用纯 DOM 方法
-            try {
-                const contents = this.rendition.getContents()[0];
-                if (contents) {
-                    const range = contents.range(cfiRange);
-                    if (range) {
-                        const span = contents.document.createElement('span');
-                        span.className = customHighlightClass;
-                        span.setAttribute('data-cfi', cfiRange);
-                        range.surroundContents(span);
-                    }
-                }
-            } catch (domError) {
-                console.error('DOM highlight also failed:', domError);
-            }
         }
         
         const location = this.rendition.currentLocation();
@@ -779,7 +675,6 @@ export class EpubController {
         return newHighlight;
     }
 
-    // 3. DYNAMIC CALL LOGIC: Correctly map color to class name and pass as argument - FIXED
     public async addHighlight(color: string, explicitCfiRange?: string, explicitText?: string) {
         const cfiRange = explicitCfiRange || this.state.selectedCfiRange;
         const text = explicitText || this.state.selectedText;
@@ -798,10 +693,9 @@ export class EpubController {
         
         if (target && target.type === 'highlight' && updates.color && updates.color !== target.color) {
             try {
-                // 先移除旧的高亮
                 this.removeBookmarkHighlights(target.cfi);
                 
-                // 添加新的高亮
+                // Add new with delay to ensure DOM update
                 setTimeout(() => {
                     this.addHighlightWithCustomColor(target.cfi, updates.color!, target.text || '');
                 }, 100);
@@ -813,28 +707,11 @@ export class EpubController {
         return newBookmarks;
     }
 
-    // 移除高亮的辅助方法
     private removeBookmarkHighlights(cfi: string) {
         if (!this.rendition) return;
-        
         try {
-            // 移除 epub.js 高亮
             this.rendition.annotations.remove(cfi, 'highlight');
         } catch (e) {}
-        
-        // 移除自定义背景高亮
-        const contents = this.rendition.getContents()[0];
-        if (contents) {
-            const customHighlights = contents.document.querySelectorAll(`[data-cfi="${cfi}"]`);
-            customHighlights.forEach((highlight: Element) => {
-                const parent = highlight.parentNode;
-                if (parent) {
-                    while (highlight.firstChild) parent.insertBefore(highlight.firstChild, highlight);
-                    parent.removeChild(highlight);
-                    parent.normalize();
-                }
-            });
-        }
     }
 
     public removeBookmark(id: string) {

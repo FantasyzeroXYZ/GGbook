@@ -80,7 +80,31 @@ export const translations = {
         modalMode: "Center Modal",
         panelMode: "Bottom Panel",
         contextSentence: "Context",
-        search: "Search"
+        search: "Search",
+        general: "General",
+        reading: "Reading",
+        integrations: "Integrations",
+        library: "Library",
+        importBook: "Import Book",
+        gridView: "Grid View",
+        listView: "List View",
+        deleteConfirm: "Delete this book?",
+        author: "Author",
+        addedAt: "Added",
+        progress: "Progress",
+        dictionaryLang: "Dictionary Language",
+        noBooks: "No books yet. Import one to get started!",
+        segmentationMode: "Segmentation",
+        segBrowser: "Browser (Intl)",
+        segAuto: "Auto / Simple",
+        appendNext: "Append Next",
+        settingsCategories: {
+            general: "General",
+            appearance: "Appearance",
+            reading: "Reading",
+            audio: "Audio & TTS",
+            anki: "Anki Integration"
+        }
     },
     zh: {
         tableOfContents: "目录",
@@ -136,7 +160,7 @@ export const translations = {
         parsingAudio: "正在后台解析音频...",
         audioError: "音频错误",
         noContent: "无内容",
-        language: "语言",
+        language: "界面语言",
         light: "浅色",
         dark: "深色",
         sepia: "护眼",
@@ -162,7 +186,31 @@ export const translations = {
         modalMode: "居中弹窗",
         panelMode: "底部面板",
         contextSentence: "所在句子",
-        search: "查询"
+        search: "查询",
+        general: "通用",
+        reading: "阅读",
+        integrations: "集成",
+        library: "书架",
+        importBook: "导入书籍",
+        gridView: "网格视图",
+        listView: "列表视图",
+        deleteConfirm: "确定删除这本书吗？",
+        author: "作者",
+        addedAt: "添加时间",
+        progress: "阅读进度",
+        dictionaryLang: "词典语言",
+        noBooks: "书架空空如也，快导入一本书吧！",
+        segmentationMode: "分词模式",
+        segBrowser: "浏览器分词 (Intl)",
+        segAuto: "自动 / 简单",
+        appendNext: "追加分词",
+        settingsCategories: {
+            general: "通用设置",
+            appearance: "外观显示",
+            reading: "阅读偏好",
+            audio: "音频与朗读",
+            anki: "Anki 记忆卡片"
+        }
     }
 };
 
