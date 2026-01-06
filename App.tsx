@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import { EpubController } from './lib/EpubController';
 import { AnkiSettings, AppSettings, LibraryBook, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, ReaderState, BookProgress } from './types';
@@ -314,6 +315,9 @@ export default function App() {
               updateSetting={updateSetting}
               tempSettings={tempSettings}
               onToggleSettings={() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }))}
+              tempAnki={tempAnki}
+              setTempAnki={setTempAnki}
+              controller={controller}
           />
       );
   }

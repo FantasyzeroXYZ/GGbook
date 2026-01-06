@@ -1,3 +1,4 @@
+
 export const translations = {
     en: {
         tableOfContents: "Contents",
@@ -74,7 +75,12 @@ export const translations = {
         scriptNotInstalled: "No response. Ensure the script is installed and running.",
         selectedText: "Selected Text",
         highlight: "Highlight",
-        pageBookmark: "Page Bookmark"
+        pageBookmark: "Page Bookmark",
+        dictionaryMode: "Dictionary Mode",
+        modalMode: "Center Modal",
+        panelMode: "Bottom Panel",
+        contextSentence: "Context",
+        search: "Search"
     },
     zh: {
         tableOfContents: "目录",
@@ -151,7 +157,12 @@ export const translations = {
         scriptNotInstalled: "无响应。请确保已安装并启用了对应的油猴脚本。",
         selectedText: "原文",
         highlight: "高亮",
-        pageBookmark: "页码书签"
+        pageBookmark: "页码书签",
+        dictionaryMode: "词典模式",
+        modalMode: "居中弹窗",
+        panelMode: "底部面板",
+        contextSentence: "所在句子",
+        search: "查询"
     }
 };
 

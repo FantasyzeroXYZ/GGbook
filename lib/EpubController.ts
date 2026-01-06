@@ -1,4 +1,5 @@
-import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark } from '../types';
+
+import { AnkiSettings, AppSettings, DEFAULT_ANKI_SETTINGS, DEFAULT_SETTINGS, NavigationItem, ReaderState, BookProgress, Bookmark, DictionaryResponse } from '../types';
 import { translations, Language } from './locales';
 
 type StateUpdater = (partialState: Partial<ReaderState>) => void;
@@ -47,12 +48,16 @@ export class EpubController {
         
         const savedSettings = localStorage.getItem('epubReaderSettings');
         this.settings = savedSettings ? JSON.parse(savedSettings) : { ...DEFAULT_SETTINGS };
+        // Defaults
         if (!this.settings.language) this.settings.language = 'zh';
+        if (!this.settings.dictionaryLanguage) this.settings.dictionaryLanguage = 'en';
         if (!this.settings.layoutMode) this.settings.layoutMode = 'single';
         if (!this.settings.theme) this.settings.theme = 'light';
         if (!this.settings.direction) this.settings.direction = 'horizontal';
         if (!this.settings.pageDirection) this.settings.pageDirection = 'ltr';
         if (this.settings.ttsEnabled === undefined) this.settings.ttsEnabled = false;
+        if (!this.settings.dictionaryMode) this.settings.dictionaryMode = 'panel';
+        if (!this.settings.libraryLayout) this.settings.libraryLayout = 'grid';
 
         const savedAnki = localStorage.getItem('epubReaderAnkiSettings');
         this.ankiSettings = savedAnki ? JSON.parse(savedAnki) : { ...DEFAULT_ANKI_SETTINGS };
@@ -187,13 +192,17 @@ export class EpubController {
 
     private playNextTTS() {
         if (!this.isTTSActive) { this.stopAudio(); return; }
+        
         if (this.ttsQueue.length === 0) {
+            // Queue finished, prepare to turn page.
             this.removeTTSHighlights();
             if (!this.isTurningPage) this.performTTSPageTurn();
             return;
         }
+
         const sentence = this.ttsQueue.shift()!;
-        this.removeTTSHighlights();
+        this.removeTTSHighlights(); // Remove previous highlight before finding next
+        
         const contents = this.rendition.getContents()[0];
         if (contents) {
             try {
@@ -209,7 +218,13 @@ export class EpubController {
                     span.style.pointerEvents = 'none'; 
                     try {
                         range.surroundContents(span);
-                        span.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                        
+                        // FIX: REMOVE scrollIntoView. This is the primary cause of "two half pages" glitch 
+                        // when a sentence spans across columns in a paginated view. 
+                        // By not forcing scroll, we allow the reader to stay on the current visual page
+                        // while the audio plays the text that is technically on the DOM.
+                        // span.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                        
                         sel.removeAllRanges(); 
                         const newRange = contents.document.createRange();
                         newRange.selectNode(span);
@@ -219,29 +234,43 @@ export class EpubController {
                 }
             } catch(e) {}
         }
+        
         if (this.ttsUtterance) { this.ttsUtterance.onend = null; this.ttsUtterance.onerror = null; }
         this.synth.cancel();
+        
         this.ttsUtterance = new SpeechSynthesisUtterance(sentence);
         if (this.settings.ttsVoiceURI) {
             const voice = this.state.ttsVoices.find(v => v.voiceURI === this.settings.ttsVoiceURI);
             if (voice) this.ttsUtterance.voice = voice;
         }
+        
         this.ttsUtterance.onend = () => { if (this.isTTSActive) this.playNextTTS(); };
         this.ttsUtterance.onerror = (e: any) => { if (e.error !== 'canceled') this.stopAudio(); };
+        
         this.synth.speak(this.ttsUtterance);
     }
 
     private async performTTSPageTurn() {
         if (!this.rendition || this.isTurningPage) return;
         this.isTurningPage = true;
+        
+        // FIX: Ensure clean state before turning
+        this.removeTTSHighlights();
+
         try {
             await this.rendition.next();
+            // Force layout sync
             this.syncLayout();
+            
             setTimeout(() => {
                 this.isTurningPage = false;
+                // Double check if we are still active before resuming
                 if (this.isTTSActive) this.playCurrentPageTTS();
-            }, 1000);
-        } catch(e) { this.stopAudio(); this.isTurningPage = false; }
+            }, 1000); // 1s delay to allow animation to finish
+        } catch(e) { 
+            this.stopAudio(); 
+            this.isTurningPage = false; 
+        }
     }
 
     private removeTTSHighlights() {
@@ -537,6 +566,11 @@ export class EpubController {
         this.settings.pageDirection = dir;
         this.saveSettings();
         if (this.rendition) try { this.rendition.direction(dir); } catch(e) {}
+    }
+    
+    public setLibraryLayout(layout: 'grid' | 'list') {
+        this.settings.libraryLayout = layout;
+        this.saveSettings();
     }
 
     public async addBookmark() {
@@ -897,9 +931,33 @@ export class EpubController {
         this.setState({ dictionaryModalVisible: true, dictionaryLoading: true, dictionaryError: null, selectedText: word, scriptTabContent: null, scriptTabLoading: true });
         this.searchWithScript(word);
         try {
-            const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
+            // Use freedictionaryapi.com and the selected dictionary language
+            const lang = this.settings.dictionaryLanguage || 'en';
+            const res = await fetch(`https://freedictionaryapi.com/api/v1/entries/${lang}/${encodeURIComponent(word)}`);
             if (!res.ok) throw new Error('Not found');
-            this.setState({ dictionaryData: (await res.json())[0], dictionaryLoading: false });
+            const json = await res.json();
+            
+            // Map the API response to our internal DictionaryResponse format
+            const mappedData: DictionaryResponse = {
+                word: json.word,
+                entries: json.entries.map((entry: any) => {
+                    const ipaPronunciation = entry.pronunciations?.find((p: any) => p.type === 'ipa');
+                    return {
+                        language: entry.language?.code,
+                        partOfSpeech: entry.partOfSpeech || 'unknown',
+                        phonetic: ipaPronunciation ? ipaPronunciation.text : undefined,
+                        pronunciations: entry.pronunciations?.map((p: any) => ({ text: p.text, audio: undefined })),
+                        senses: entry.senses?.map((sense: any) => ({ 
+                            definition: sense.definition, 
+                            examples: sense.examples || [], 
+                            synonyms: sense.synonyms || [], 
+                            antonyms: sense.antonyms || [] 
+                        }))
+                    };
+                })
+            };
+            
+            this.setState({ dictionaryData: mappedData, dictionaryLoading: false });
         } catch (e: any) { this.setState({ dictionaryError: e.message, dictionaryLoading: false }); }
     }
     

@@ -1,3 +1,4 @@
+
 export interface Book {
     title: string;
     author: string;
@@ -54,13 +55,36 @@ export interface AnkiSettings {
     tagsField: string;
 }
 
+// Dictionary Response Types
+export interface DictionaryEntry {
+    language?: string;
+    partOfSpeech: string;
+    phonetic?: string;
+    pronunciations?: { text: string; audio?: string }[];
+    senses: {
+        definition: string;
+        examples?: string[];
+        synonyms?: string[];
+        antonyms?: string[];
+    }[];
+}
+
+export interface DictionaryResponse {
+    word: string;
+    entries: DictionaryEntry[];
+}
+
+export type UILanguage = 'en' | 'zh';
+export type LearningLanguage = 'en' | 'zh' | 'ja' | 'es' | 'fr' | 'ru';
+
 export interface AppSettings {
-    language: 'en' | 'zh';
+    language: UILanguage;
+    dictionaryLanguage: LearningLanguage; 
     fontSize: 'small' | 'medium' | 'large' | 'xlarge';
     theme: 'light' | 'dark' | 'sepia';
-    layoutMode: 'single' | 'double'; // New: Single or Double page
+    layoutMode: 'single' | 'double'; 
     direction: 'horizontal' | 'vertical';
-    pageDirection: 'ltr' | 'rtl'; // New: Page turn direction
+    pageDirection: 'ltr' | 'rtl'; 
     offlineMode: boolean;
     syncProgress: boolean;
     darkMode: boolean;
@@ -70,12 +94,16 @@ export interface AppSettings {
     // TTS Settings
     ttsEnabled: boolean;
     ttsVoiceURI: string;
+    // Dictionary Settings
+    dictionaryMode: 'modal' | 'panel';
+    // Library Settings
+    libraryLayout: 'grid' | 'list'; // New: Library display mode
 }
 
 export interface ReaderState {
     currentBook: Book | null;
     navigationMap: NavigationItem[];
-    bookmarks: Bookmark[]; // New: Current bookmarks
+    bookmarks: Bookmark[]; 
     currentCfi: string;
     currentChapterLabel: string;
     isSidebarOpen: boolean;
@@ -85,7 +113,7 @@ export interface ReaderState {
     loadingMessage: string;
     
     // 音频状态
-    hasAudio: boolean; // New: Does the book have audio?
+    hasAudio: boolean; 
     isAudioPlaying: boolean;
     audioCurrentTime: number;
     audioDuration: number;
@@ -101,11 +129,11 @@ export interface ReaderState {
     selectionToolbarVisible: boolean;
     selectionRect: DOMRect | null;
     selectedText: string;
-    selectedSentence?: string; // New: Captured sentence context
+    selectedSentence?: string; 
     selectedElementId: string | null;
-    selectedCfiRange: string | null; // New: Store the range CFI for highlighting
+    selectedCfiRange: string | null; 
     dictionaryModalVisible: boolean;
-    dictionaryData: any | null;
+    dictionaryData: DictionaryResponse | null;
     dictionaryLoading: boolean;
     dictionaryError: string | null;
     
@@ -129,11 +157,12 @@ export interface ReaderState {
 
 export const DEFAULT_SETTINGS: AppSettings = {
     language: 'zh',
+    dictionaryLanguage: 'en',
     fontSize: 'medium',
     theme: 'light',
     layoutMode: 'single',
     direction: 'horizontal',
-    pageDirection: 'ltr', // Default to Left-to-Right
+    pageDirection: 'ltr', 
     offlineMode: false,
     syncProgress: true,
     darkMode: false,
@@ -141,7 +170,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     syncTextHighlight: true,
     audioVolume: 80,
     ttsEnabled: false,
-    ttsVoiceURI: ''
+    ttsVoiceURI: '',
+    dictionaryMode: 'panel',
+    libraryLayout: 'grid'
 };
 
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {

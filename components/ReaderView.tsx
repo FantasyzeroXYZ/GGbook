@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
-import { ReaderState, AppSettings, NavigationItem, Bookmark, AnkiSettings } from '../types';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { ReaderState, AppSettings, NavigationItem, Bookmark, AnkiSettings, DictionaryResponse } from '../types';
 import { Icon } from './Icon';
 import { translations } from '../lib/locales';
 import { BookmarkEditor } from './BookmarkEditor';
+import DictionaryPanel from './DictionaryPanel';
+import { Highlighter, Edit3 } from 'lucide-react';
 
 type SidebarTab = 'toc' | 'bookmarks' | 'notes';
-type DictionaryTab = 'api' | 'script';
+type DictionaryTab = 'api' | 'script' | 'web'; // Added 'web'
 
 interface ReaderViewProps {
     state: ReaderState;
@@ -40,6 +43,9 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
 }) => {
     const [sidebarTab, setSidebarTab] = useState<SidebarTab>('toc');
     const [dictTab, setDictTab] = useState<DictionaryTab>('api');
+    const [manualSearchTerm, setManualSearchTerm] = useState('');
+    const scriptModalRef = useRef<HTMLDivElement>(null);
+
     const t = translations[tempSettings.language || 'zh'];
 
     const renderTOC = (items: NavigationItem[], level = 0) => {
@@ -119,14 +125,135 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
         ));
     };
 
+    const renderDictionaryContent = () => (
+        <div className="text-gray-800 dark:text-gray-200 h-full flex flex-col">
+             {dictTab === 'api' ? (
+               <div className="overflow-y-auto">
+                   {state.dictionaryLoading && <div className="text-center py-4"><div className="loader inline-block border-2 border-t-blue-500 w-6 h-6 rounded-full animate-spin-custom"></div> {t.loading}</div>}
+                   {state.dictionaryError && <div className="text-red-500 text-center py-4">{state.dictionaryError}</div>}
+                   {state.dictionaryData && !state.dictionaryLoading && (
+                       <div>
+                           <div className="flex items-baseline gap-2 mb-2">
+                               <h2 className="text-2xl font-bold text-blue-600">{state.dictionaryData.word}</h2>
+                           </div>
+                            {state.dictionaryData.entries.map((entry: any, k: number) => (
+                                <div key={k} className="mb-6">
+                                     <div className="flex items-center gap-2 mb-2">
+                                         <span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 text-xs font-semibold px-2 py-0.5 rounded">{entry.partOfSpeech}</span>
+                                         {entry.phonetic && <span className="text-gray-500 italic">[{entry.phonetic}]</span>}
+                                     </div>
+                                     <ol className="list-decimal pl-5 space-y-3">
+                                        {entry.senses.map((sense: any, m: number) => (
+                                            <li key={m} className="text-sm">
+                                                <div className="text-gray-800 dark:text-gray-200 leading-relaxed">{sense.definition}</div>
+                                                {sense.examples && sense.examples.length > 0 && (
+                                                    <ul className="list-disc pl-4 mt-1">
+                                                        {sense.examples.slice(0, 2).map((ex: string, n: number) => (
+                                                             <li key={n} className="text-gray-500 italic text-xs">"{ex}"</li>
+                                                        ))}
+                                                    </ul>
+                                                )}
+                                            </li>
+                                        ))}
+                                     </ol>
+                                </div>
+                            ))}
+                       </div>
+                   )}
+               </div>
+             ) : dictTab === 'script' ? (
+                 <div className="flex-1 overflow-y-auto flex flex-col">
+                    {/* Script Tab Content */}
+                    {state.scriptTabLoading && (
+                        <div className="text-center py-4">
+                            <div className="loader inline-block border-2 border-t-blue-500 w-6 h-6 rounded-full animate-spin-custom mb-2"></div>
+                            <p className="text-sm text-gray-500">{t.waitingForScript}</p>
+                        </div>
+                    )}
+                    {state.scriptTabError && (
+                        <div className="text-red-500 text-center py-4">
+                            {state.scriptTabError}
+                            <p className="text-xs text-gray-400 mt-2">{t.scriptNotInstalled}</p>
+                        </div>
+                    )}
+                    {state.scriptTabContent ? (
+                        <div 
+                           ref={scriptModalRef}
+                           className="script-content-container"
+                           dangerouslySetInnerHTML={{ __html: state.scriptTabContent }} 
+                        />
+                    ) : (
+                         !state.scriptTabLoading && !state.scriptTabError && <div className="text-center text-gray-500 py-4">{t.noContent}</div>
+                    )}
+                 </div>
+             ) : (
+                <div className="w-full h-full flex flex-col bg-white">
+                    <iframe 
+                        src={`https://www.google.com/search?igu=1&q=${encodeURIComponent(state.selectedText)}`} 
+                        className="w-full flex-1 border-0" 
+                        sandbox="allow-forms allow-scripts allow-same-origin" 
+                    />
+                </div>
+             )}
+        </div>
+    );
+    
+    // Add to Anki logic shared
+    const handleAddToAnki = async (overrideTerm?: string, overrideDef?: string, overrideSentence?: string, scriptDef?: string) => {
+         setIsAnkiAdding(true);
+         let def = overrideDef || "";
+         const term = overrideTerm || state.selectedText;
+         const sent = overrideSentence || state.selectedSentence || term;
+
+         if (!def) {
+             if (dictTab === 'api' && state.dictionaryData) {
+                 // Reuse logic from DictionaryPanel format
+                 const d = state.dictionaryData;
+                 let html = `<div><b>${d.word}</b></div>`;
+                 d.entries.forEach((e: any) => {
+                     html += `<div><i>${e.partOfSpeech}</i></div><ol>`;
+                     e.senses.forEach((s: any) => {
+                         html += `<li>${s.definition}</li>`;
+                     });
+                     html += `</ol>`;
+                 });
+                 def = html;
+             } else if (dictTab === 'script') {
+                 // Try to get innerHTML from ref if script content is loaded
+                 if (scriptModalRef.current) {
+                     def = scriptModalRef.current.innerHTML;
+                 } else if (state.scriptTabContent) {
+                     def = state.scriptTabContent;
+                 }
+             }
+         }
+         
+         // Use passed scriptDef if available (from Panel)
+         if (scriptDef) def = scriptDef;
+
+         try {
+             await controller.current?.addToAnki(term, def, sent);
+             setState(s => ({...s, toastMessage: t.addedToAnki, dictionaryModalVisible: false}));
+             setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
+         } catch(e: any) {
+             alert(t.failed + ': ' + e.message);
+         } finally {
+             setIsAnkiAdding(false);
+         }
+    };
+    
+    // Manual search handler
+    const handleManualSearch = () => {
+        if (!manualSearchTerm.trim()) return;
+        controller.current?.lookupWord(manualSearchTerm.trim());
+    };
+
     return (
     <div 
         className={`h-[100dvh] flex flex-col overflow-hidden ${state.isDarkMode ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-100 text-gray-800'}`}
         onContextMenu={(e) => e.preventDefault()}
         onClick={(e) => {
-            // 全局点击逻辑：如果点击时显示工具栏且没有有效文本选区，则立即关闭工具栏
             if (state.selectionToolbarVisible) {
-                // 延迟检查选区状态，给 DOM 选区更新一点时间，增加鲁棒性
                 setTimeout(() => {
                     const sel = window.getSelection();
                     if (!sel || sel.isCollapsed || !sel.toString().trim()) {
@@ -157,11 +284,11 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
       </div>
 
       <div className="flex-1 relative overflow-hidden flex">
-          {/* 覆盖层：点击空白处关闭侧边栏/设置栏 */}
-          {(state.isSidebarOpen || state.isSettingsOpen) && (
+          {/* 覆盖层 */}
+          {(state.isSidebarOpen || state.isSettingsOpen || (state.dictionaryModalVisible && tempSettings.dictionaryMode === 'panel')) && (
               <div 
                   className="absolute inset-0 z-40 bg-black/20"
-                  onClick={() => setState(s => ({ ...s, isSidebarOpen: false, isSettingsOpen: false }))}
+                  onClick={() => setState(s => ({ ...s, isSidebarOpen: false, isSettingsOpen: false, dictionaryModalVisible: false }))}
               ></div>
           )}
 
@@ -206,7 +333,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                    </div>
                )}
 
-               {/* EPub.js 容器 */}
                <div 
                  id="viewer" 
                  ref={viewerRef} 
@@ -215,7 +341,6 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                
                {state.currentBook && !state.isLoading && (
                    <>
-                       {/* 缩小触发范围：将 w-16 改为 w-8 */}
                        <div className="absolute top-0 bottom-0 left-0 w-8 z-20 cursor-pointer flex items-center justify-start pl-1 hover:bg-black hover:bg-opacity-5 dark:hover:bg-white dark:hover:bg-opacity-5 transition-colors group tap-highlight-transparent" 
                             onClick={() => tempSettings.pageDirection === 'rtl' ? controller.current?.nextPage() : controller.current?.prevPage()}>
                            <div className="bg-gray-800 text-white p-2 rounded-full opacity-0 group-hover:opacity-50 transition-opacity transform scale-75"><Icon name="chevron-left"/></div>
@@ -228,7 +353,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                )}
           </div>
 
-          {/* 设置侧边栏 - 使用 details/summary 实现默认折叠 */}
+          {/* 设置侧边栏 */}
           <div className={`fixed inset-y-0 right-0 w-80 max-w-full bg-white dark:bg-gray-800 shadow-xl transform transition-transform z-50 ${state.isSettingsOpen ? 'translate-x-0' : 'translate-x-full'}`}>
                <div className="p-4 bg-gray-100 dark:bg-gray-700 flex justify-between items-center font-bold text-gray-800 dark:text-gray-100">
                    <span>{t.settings}</span>
@@ -257,26 +382,10 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                                </select>
                            </div>
                            <div>
-                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">Direction</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.direction} onChange={(e) => updateSetting('direction', e.target.value)}>
-                                   <option value="horizontal">Horizontal (横排)</option>
-                                   <option value="vertical">Vertical (竖排 - 日语)</option>
-                               </select>
-                           </div>
-                           <div>
                                <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t.pageDirection}</label>
                                <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.pageDirection} onChange={(e) => updateSetting('pageDirection', e.target.value)}>
                                    <option value="ltr">{t.ltr}</option>
                                    <option value="rtl">{t.rtl}</option>
-                               </select>
-                           </div>
-                           <div>
-                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t.fontSize}</label>
-                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.fontSize} onChange={(e) => updateSetting('fontSize', e.target.value)}>
-                                   <option value="small">{t.small}</option>
-                                   <option value="medium">{t.medium}</option>
-                                   <option value="large">{t.large}</option>
-                                   <option value="xlarge">{t.xlarge}</option>
                                </select>
                            </div>
                            <div>
@@ -287,10 +396,28 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                                    <option value="sepia">{t.sepia}</option>
                                </select>
                            </div>
+                           <div>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">{t.dictionaryMode}</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.dictionaryMode || 'panel'} onChange={(e) => updateSetting('dictionaryMode', e.target.value)}>
+                                   <option value="modal">{t.modalMode}</option>
+                                   <option value="panel">{t.panelMode}</option>
+                               </select>
+                           </div>
+                           <div>
+                               <label className="block text-sm mb-1 text-gray-600 dark:text-gray-400">Dictionary Language</label>
+                               <select className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600 text-sm" value={tempSettings.dictionaryLanguage || 'en'} onChange={(e) => updateSetting('dictionaryLanguage', e.target.value)}>
+                                   <option value="en">English</option>
+                                   <option value="zh">Chinese</option>
+                                   <option value="ja">Japanese</option>
+                                   <option value="es">Spanish</option>
+                                   <option value="fr">French</option>
+                                   <option value="ru">Russian</option>
+                               </select>
+                           </div>
                        </div>
                    </details>
-
-                   {/* TTS 设置 */}
+                   
+                   {/* TTS Settings */}
                    <details className="group">
                        <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center px-2">
                            {t.tts}
@@ -330,7 +457,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                        </div>
                    </details>
 
-                   {/* 音频设置 */}
+                   {/* Audio Settings */}
                    <details className="group">
                        <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center px-2">
                            {t.audio}
@@ -351,8 +478,8 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                            </div>
                        </div>
                    </details>
-                   
-                   {/* Anki 设置 */}
+
+                   {/* Anki Settings */}
                    <details className="group">
                        <summary className="font-bold text-gray-500 uppercase text-xs border-b pb-1 cursor-pointer list-none flex justify-between items-center px-2">
                            {t.ankiConnect}
@@ -438,7 +565,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           </div>
       )}
 
-      {/* 底部 / 音频播放器 (精简高度为 h-11/44px) */}
+      {/* 底部 / 音频播放器 */}
       {(state.hasAudio || (tempSettings.ttsEnabled && !state.hasAudio)) && (
           <div className="bg-white dark:bg-gray-800 border-t dark:border-gray-700 p-0.5 flex items-center justify-center z-50 shadow-[0_-2px_10px_rgba(0,0,0,0.1)] h-16 md:h-11 shrink-0 relative transition-colors duration-300 w-full overflow-hidden">
                <div className="w-full flex items-center gap-2 md:gap-4 px-2 md:px-4 max-w-full overflow-hidden">
@@ -490,48 +617,49 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   <Icon name="book" />
               </button>
               
+              <div className="w-px h-6 bg-gray-600 mx-1"></div>
+
+              {/* Single Highlight Button -> Opens Editor immediately */}
               <button 
-                  className="p-2 hover:bg-gray-700 rounded transition-colors" 
-                  title={t.highlight} 
+                  className="p-2 hover:bg-gray-700 rounded transition-colors flex items-center gap-1" 
+                  title={t.highlight}
                   onClick={async (e) => {
                       e.stopPropagation();
                       e.preventDefault();
                       
-                      if (!state.selectedCfiRange) {
-                          console.warn("No CFI Range for highlight");
-                          return;
-                      }
+                      if (!state.selectedCfiRange) return;
 
-                      // Pass current state explicitly to avoid closure staleness issues in controller
                       try {
+                          // Add highlight with default yellow color first
+                          const defaultColor = '#FFEB3B';
                           const newBookmarks = await controller.current?.addHighlight(
-                              '#FFEB3B', 
+                              defaultColor, 
                               state.selectedCfiRange, 
                               state.selectedText
                           );
                           
                           if (newBookmarks && newBookmarks.length > 0) {
+                              // Immediately open editor for the new highlight to let user change color/add note
                               const newHighlight = newBookmarks[newBookmarks.length - 1];
-                              // Force state update to show editor immediately and hide selection toolbar
                               setState(s => ({ 
                                   ...s, 
                                   bookmarks: newBookmarks,
                                   editingBookmarkId: newHighlight.id, 
                                   selectionToolbarVisible: false,
-                                  selectedCfiRange: null, // Clear selection state
+                                  selectedCfiRange: null, 
                                   selectedText: '',
                                   selectionRect: null
                               }));
-                          } else {
-                              console.warn("No bookmarks returned from addHighlight");
                           }
                       } catch (err) {
                           console.error("Highlighting failed:", err);
                       }
                   }}
               >
-                  <Icon name="highlighter" />
+                  <Highlighter size={16} />
               </button>
+
+              <div className="w-px h-6 bg-gray-600 mx-1"></div>
 
               <button className="p-2 hover:bg-gray-700 rounded transition-colors" title="Copy" onClick={(e) => { e.stopPropagation(); controller.current?.copySelection(); }}>
                   <Icon name="copy" />
@@ -543,16 +671,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                 disabled={isAnkiAdding}
                 onClick={async (e) => {
                     e.stopPropagation();
-                    try {
-                        setIsAnkiAdding(true);
-                        await controller.current?.addToAnki(state.selectedText, '', state.selectedSentence || state.selectedText);
-                        setState(s => ({...s, toastMessage: t.addedToAnki, selectionToolbarVisible: false}));
-                        setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
-                    } catch(e: any) {
-                        alert(t.failed + ': ' + e.message);
-                    } finally {
-                        setIsAnkiAdding(false);
-                    }
+                    await handleAddToAnki();
                 }}
               >
                   {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus-square" />}
@@ -582,15 +701,15 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
           </div>
       )}
 
-      {/* Dictionary Modal with Tabs */}
-      {state.dictionaryModalVisible && (
+      {/* Dictionary: Center Modal Mode */}
+      {state.dictionaryModalVisible && tempSettings.dictionaryMode === 'modal' && (
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setState(s => ({ ...s, dictionaryModalVisible: false }))}>
               <div className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-lg shadow-2xl flex flex-col max-h-[80vh]" onClick={e => e.stopPropagation()}>
                   <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-700 rounded-t-lg">
                       <h3 className="font-bold text-lg text-gray-800 dark:text-gray-100">{t.dictionary}</h3>
                       <button onClick={() => setState(s => ({ ...s, dictionaryModalVisible: false }))} className="text-gray-600 dark:text-gray-300"><Icon name="times"/></button>
                   </div>
-
+                  
                   {/* Tabs */}
                   <div className="flex border-b dark:border-gray-700">
                       <button 
@@ -605,63 +724,16 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                       >
                           {t.scriptTab}
                       </button>
+                      <button 
+                          className={`flex-1 p-3 font-medium transition-colors ${dictTab === 'web' ? 'text-blue-600 border-b-2 border-blue-600 dark:text-blue-400 dark:border-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                          onClick={() => setDictTab('web')}
+                      >
+                          Web
+                      </button>
                   </div>
 
-                  <div className="p-6 overflow-y-auto flex-1 text-gray-800 dark:text-gray-200">
-                      {dictTab === 'api' ? (
-                        <>
-                            {state.dictionaryLoading && <div className="text-center"><div className="loader inline-block border-2 border-t-blue-500 w-6 h-6 rounded-full animate-spin-custom"></div> {t.loading}</div>}
-                            {state.dictionaryError && <div className="text-red-500 text-center">{state.dictionaryError}</div>}
-                            {state.dictionaryData && (
-                                <div>
-                                    <div className="flex items-baseline gap-2 mb-2">
-                                        <h2 className="text-2xl font-bold text-blue-600">{state.dictionaryData.word}</h2>
-                                        <span className="text-gray-500 italic">{state.dictionaryData.phonetic}</span>
-                                    </div>
-                                    {state.dictionaryData.meanings.map((m: any, i: number) => (
-                                        <div key={i} className="mb-4">
-                                            <div className="font-bold text-gray-700 dark:text-gray-300 mb-1">{m.partOfSpeech}</div>
-                                            <ul className="list-disc pl-5 space-y-1 text-sm">
-                                                {m.definitions.slice(0,3).map((d: any, j: number) => (
-                                                    <li key={j}>
-                                                        {d.definition}
-                                                        {d.example && <div className="text-gray-500 italic text-xs mt-1">Ex: {d.example}</div>}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </>
-                      ) : (
-                          <>
-                             {/* Script Tab Content */}
-                             {state.scriptTabLoading && (
-                                 <div className="text-center py-4">
-                                     <div className="loader inline-block border-2 border-t-blue-500 w-6 h-6 rounded-full animate-spin-custom mb-2"></div>
-                                     <p className="text-sm text-gray-500">{t.waitingForScript}</p>
-                                 </div>
-                             )}
-                             {state.scriptTabError && (
-                                 <div className="text-red-500 text-center py-4">
-                                     {state.scriptTabError}
-                                     <p className="text-xs text-gray-400 mt-2">{t.scriptNotInstalled}</p>
-                                 </div>
-                             )}
-                             {state.scriptTabContent && (
-                                 <div 
-                                    className="script-content-container"
-                                    dangerouslySetInnerHTML={{ __html: state.scriptTabContent }} 
-                                 />
-                             )}
-                             {!state.scriptTabLoading && !state.scriptTabContent && !state.scriptTabError && (
-                                 <div className="text-center text-gray-500 py-4">
-                                     {t.noContent}
-                                 </div>
-                             )}
-                          </>
-                      )}
+                  <div className="p-6 overflow-y-auto flex-1">
+                     {renderDictionaryContent()}
                   </div>
 
                   {/* Footer */}
@@ -670,25 +742,7 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                           <button 
                             className={`px-4 py-2 rounded text-white flex items-center gap-2 ${state.ankiConnected ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
                             disabled={!state.ankiConnected || isAnkiAdding}
-                            onClick={async () => {
-                                 setIsAnkiAdding(true);
-                                 let def = "";
-                                 if (dictTab === 'api' && state.dictionaryData) {
-                                     def = formatDefinition(state.dictionaryData);
-                                 } else if (dictTab === 'script' && state.scriptTabContent) {
-                                     def = state.scriptTabContent; // Use the HTML directly
-                                 }
-
-                                 try {
-                                     await controller.current?.addToAnki(state.selectedText, def, state.selectedSentence || state.selectedText);
-                                     setState(s => ({...s, toastMessage: t.addedToAnki, dictionaryModalVisible: false}));
-                                     setTimeout(() => setState(s => ({...s, toastMessage: null})), 2000);
-                                 } catch(e: any) {
-                                     alert(t.failed + ': ' + e.message);
-                                 } finally {
-                                     setIsAnkiAdding(false);
-                                 }
-                            }}
+                            onClick={() => handleAddToAnki()}
                           >
                               {isAnkiAdding ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <Icon name="plus"/>}
                               {t.addToAnki}
@@ -697,6 +751,23 @@ export const ReaderView: React.FC<ReaderViewProps> = ({
                   )}
               </div>
           </div>
+      )}
+      
+      {/* Dictionary: Bottom Panel Mode (Using new Component) */}
+      {state.dictionaryModalVisible && tempSettings.dictionaryMode === 'panel' && (
+          <DictionaryPanel 
+              isOpen={state.dictionaryModalVisible}
+              onClose={() => setState(s => ({ ...s, dictionaryModalVisible: false }))}
+              word={state.selectedText}
+              sentence={state.selectedSentence || state.selectedText}
+              learningLanguage={tempSettings.dictionaryLanguage || 'en'}
+              onAddToAnki={(word, def, sent, scriptDef) => handleAddToAnki(word, def, sent, scriptDef)}
+              isAddingToAnki={isAnkiAdding}
+              canAppend={false} // Feature not fully wired in original
+              onAppendNext={() => {}}
+              lang={tempSettings.language || 'zh'}
+              searchEngine='google'
+          />
       )}
 
       {/* Bookmark Editor Modal */}
