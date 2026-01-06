@@ -100,20 +100,24 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                     <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Library</h2>
                     <div className="flex items-center gap-3">
+                        {/* Grid/List Toggle Button */}
                         <div className="flex bg-white dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700 shadow-sm">
                              <button 
                                 onClick={() => updateSetting('libraryLayout', 'grid')} 
                                 className={`p-2 rounded transition-all ${tempSettings.libraryLayout === 'grid' ? 'bg-slate-100 dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                title="Grid View"
                             >
                                 <LayoutGrid size={18} />
                              </button>
                              <button 
                                 onClick={() => updateSetting('libraryLayout', 'list')} 
                                 className={`p-2 rounded transition-all ${tempSettings.libraryLayout === 'list' ? 'bg-slate-100 dark:bg-slate-700 text-blue-600 dark:text-blue-400 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                                title="List View"
                             >
                                 <ListIcon size={18} />
                              </button>
                         </div>
+                        
                         <label className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 text-sm font-medium rounded-lg cursor-pointer transition-all shadow-lg shadow-blue-500/20 flex items-center gap-2 hover:-translate-y-0.5 active:translate-y-0">
                             <Import size={18} /> 
                             Import Book
